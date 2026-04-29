@@ -4,20 +4,14 @@ import {
   Box, Typography, Card, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, IconButton, Button, Switch,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem,
+  Stack, Chip,
 } from '@mui/material';
-import { Add, Delete } from '@mui/icons-material';
+import { Add, Delete, Rule as RuleIcon } from '@mui/icons-material';
 import {
   getConstraints, createConstraint, updateConstraint, deleteConstraint,
   getTeachers, getSubjects, getClasses,
 } from '../../api/client';
 
-/**
- * Per-type form schema. Adding a new constraint type = add an entry here
- * and a matching handler on the backend (solver/constraints.py).
- *
- * Each schema declares which built-in fields show (teacher / subject / class)
- * and which numeric parameters live inside `parameters` JSON.
- */
 type Field =
   | { kind: 'teacher'; required?: boolean; allowAll?: boolean }
   | { kind: 'subject'; required?: boolean; allowAll?: boolean }
@@ -64,12 +58,13 @@ const TYPE_SCHEMAS: TypeSchema[] = [
 ];
 
 export default function ConstraintsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [constraints, setConstraints] = useState<any[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
+  const isRtl = i18n.language === 'he';
 
   const loadData = () => {
     getConstraints().then((r: any) => setConstraints(r.data.results ?? [])).catch(() => {});
@@ -94,10 +89,17 @@ export default function ConstraintsPage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700 }}>
-          {t('constraints.title')}
-        </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', md: 'center' }, mb: 3, flexDirection: { xs: 'column', md: 'row' }, gap: 2 }}>
+        <Box>
+          <Typography variant="h2" sx={{ mb: 0.5 }}>
+            {t('constraints.title')}
+          </Typography>
+          <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
+            {isRtl
+              ? 'הגדירו אילוצים שיכבדו בעת יצירה אוטומטית של מערכת השעות.'
+              : 'Define rules that auto-generation will respect.'}
+          </Typography>
+        </Box>
         <Button variant="contained" startIcon={<Add />} onClick={() => setShowDialog(true)}>
           {t('constraints.add')}
         </Button>
@@ -112,28 +114,72 @@ export default function ConstraintsPage() {
                 <TableCell>{t('constraints.type')}</TableCell>
                 <TableCell>{t('constraints.priority')}</TableCell>
                 <TableCell>{t('constraints.active')}</TableCell>
-                <TableCell></TableCell>
+                <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
               {constraints.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell>{c.name}</TableCell>
-                  <TableCell>{c.constraint_type_display}</TableCell>
-                  <TableCell>{c.priority_display}</TableCell>
+                  <TableCell>
+                    <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{c.name}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography sx={{ fontSize: 13, color: 'grey.600' }}>
+                      {c.constraint_type_display}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      label={c.priority_display}
+                      color={c.priority === 'hard' ? 'error' : 'default'}
+                      variant={c.priority === 'hard' ? 'filled' : 'outlined'}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Switch checked={c.is_active} onChange={() => handleToggle(c)} />
                   </TableCell>
-                  <TableCell>
-                    <IconButton size="small" color="error" onClick={() => handleDelete(c.id)}>
-                      <Delete />
+                  <TableCell align="right">
+                    <IconButton
+                      size="small"
+                      onClick={() => handleDelete(c.id)}
+                      sx={{ color: 'grey.500', '&:hover': { color: 'error.main' } }}
+                    >
+                      <Delete fontSize="small" />
                     </IconButton>
                   </TableCell>
                 </TableRow>
               ))}
               {constraints.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center">{t('data.noData')}</TableCell>
+                  <TableCell colSpan={5} sx={{ borderBottom: 0 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', py: 6 }}>
+                      <Box
+                        sx={{
+                          width: 64, height: 64, borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'linear-gradient(135deg, rgba(79,70,229,0.10), rgba(99,102,241,0.04))',
+                          border: '1px dashed',
+                          borderColor: 'primary.light',
+                          color: 'primary.main',
+                          mb: 1.5,
+                        }}
+                      >
+                        <RuleIcon />
+                      </Box>
+                      <Typography sx={{ fontSize: 15, fontWeight: 600, color: 'grey.700', mb: 0.25 }}>
+                        {t('data.noData')}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'grey.500', mb: 2 }}>
+                        {isRtl
+                          ? 'הוסיפו אילוץ ראשון כדי להבטיח לוח זמנים תקין'
+                          : 'Add your first constraint to ensure a valid schedule'}
+                      </Typography>
+                      <Button size="small" variant="contained" startIcon={<Add />} onClick={() => setShowDialog(true)}>
+                        {t('constraints.add')}
+                      </Button>
+                    </Box>
+                  </TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -197,44 +243,45 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{t('constraints.add')}</DialogTitle>
       <DialogContent>
-        <TextField
-          fullWidth label={t('constraints.name')} value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          margin="normal"
-        />
-        <TextField
-          fullWidth select label={t('constraints.type')} value={form.constraint_type}
-          onChange={(e) => switchType(e.target.value)}
-          margin="normal"
-        >
-          {TYPE_SCHEMAS.map((s) => (
-            <MenuItem key={s.value} value={s.value}>{t(s.labelKey)}</MenuItem>
-          ))}
-        </TextField>
-        <TextField
-          fullWidth select label={t('constraints.priority')} value={form.priority}
-          onChange={(e) => setForm({ ...form, priority: e.target.value })}
-          margin="normal"
-        >
-          <MenuItem value="hard">{t('constraints.hard')}</MenuItem>
-          <MenuItem value="soft">{t('constraints.soft')}</MenuItem>
-        </TextField>
-
-        {schema.fields.map((field, i) => (
-          <FieldInput
-            key={i}
-            field={field}
-            form={form}
-            setForm={setForm}
-            teachers={teachers}
-            subjects={subjects}
-            classes={classes}
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField
+            fullWidth label={t('constraints.name')} value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
-        ))}
+          <TextField
+            fullWidth select label={t('constraints.type')} value={form.constraint_type}
+            onChange={(e) => switchType(e.target.value)}
+          >
+            {TYPE_SCHEMAS.map((s) => (
+              <MenuItem key={s.value} value={s.value}>{t(s.labelKey)}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            fullWidth select label={t('constraints.priority')} value={form.priority}
+            onChange={(e) => setForm({ ...form, priority: e.target.value })}
+          >
+            <MenuItem value="hard">{t('constraints.hard')}</MenuItem>
+            <MenuItem value="soft">{t('constraints.soft')}</MenuItem>
+          </TextField>
+
+          {schema.fields.map((field, i) => (
+            <FieldInput
+              key={i}
+              field={field}
+              form={form}
+              setForm={setForm}
+              teachers={teachers}
+              subjects={subjects}
+              classes={classes}
+            />
+          ))}
+        </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>{t('data.cancel')}</Button>
-        <Button variant="contained" onClick={() => onSave(form)}>{t('data.save')}</Button>
+        <Button onClick={onClose} variant="text">{t('data.cancel')}</Button>
+        <Button variant="contained" onClick={() => onSave(form)} disabled={!form.name}>
+          {t('data.save')}
+        </Button>
       </DialogActions>
     </Dialog>
   );
@@ -260,7 +307,6 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
           ...form,
           parameters: { ...form.parameters, [field.key]: Number(e.target.value) },
         })}
-        margin="normal"
       />
     );
   }
@@ -271,7 +317,6 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
         fullWidth select label={t('assignment.teacher')}
         value={form.teacher ?? ''}
         onChange={(e) => setForm({ ...form, teacher: e.target.value === '' ? null : Number(e.target.value) })}
-        margin="normal"
       >
         {field.allowAll && <MenuItem value="">{allLabel}</MenuItem>}
         {teachers.map((x: any) => (
@@ -287,7 +332,6 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
         fullWidth select label={t('assignment.subject')}
         value={form.subject ?? ''}
         onChange={(e) => setForm({ ...form, subject: e.target.value === '' ? null : Number(e.target.value) })}
-        margin="normal"
       >
         {field.allowAll && <MenuItem value="">{allLabel}</MenuItem>}
         {subjects.map((x: any) => (
@@ -303,7 +347,6 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
         fullWidth select label={t('assignment.class')}
         value={form.school_class ?? ''}
         onChange={(e) => setForm({ ...form, school_class: e.target.value === '' ? null : Number(e.target.value) })}
-        margin="normal"
       >
         {field.allowAll && <MenuItem value="">{allLabel}</MenuItem>}
         {classes.map((x: any) => (
