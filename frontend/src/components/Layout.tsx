@@ -14,6 +14,8 @@ import {
   CalendarMonth as TimetableIcon,
   Translate as LangIcon,
   Logout as LogoutIcon,
+  ManageAccounts as UsersIcon,
+  History as AuditIcon,
 } from '@mui/icons-material';
 import { logout as apiLogout } from '../api/client';
 
@@ -31,12 +33,19 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const isSuperAdmin = user?.role === 'super_admin';
+
   const menuItems = [
     { text: t('nav.dashboard'), icon: <DashboardIcon />, path: '/' },
     { text: t('nav.data'), icon: <DataIcon />, path: '/data' },
     { text: t('nav.import'), icon: <UploadIcon />, path: '/import' },
     { text: t('nav.constraints'), icon: <ConstraintIcon />, path: '/constraints' },
     { text: t('nav.timetable'), icon: <TimetableIcon />, path: '/timetable' },
+  ];
+
+  const adminItems = [
+    { text: t('nav.adminUsers'), icon: <UsersIcon />, path: '/admin/users' },
+    { text: t('nav.adminAudit'), icon: <AuditIcon />, path: '/admin/audit' },
   ];
 
   const handleLogout = async () => {
@@ -64,7 +73,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             {t('app.title')}
           </Typography>
           <Typography variant="body2" sx={{ mr: 2 }}>
-            {user?.first_name || user?.username}
+            {user?.full_name || user?.first_name || user?.username}
           </Typography>
           <Button color="inherit" size="small" onClick={toggleLang}>
             {i18n.language === 'he' ? 'EN' : 'HE'}
@@ -101,6 +110,26 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             </ListItemButton>
           ))}
         </List>
+        {isSuperAdmin && (
+          <>
+            <Divider />
+            <List subheader={<Typography variant="overline" sx={{ pl: 2 }}>{t('nav.adminSection')}</Typography>}>
+              {adminItems.map((item) => (
+                <ListItemButton
+                  key={item.path}
+                  selected={location.pathname === item.path}
+                  onClick={() => {
+                    navigate(item.path);
+                    setDrawerOpen(false);
+                  }}
+                >
+                  <ListItemIcon>{item.icon}</ListItemIcon>
+                  <ListItemText primary={item.text} />
+                </ListItemButton>
+              ))}
+            </List>
+          </>
+        )}
         <Divider />
         <List>
           <ListItemButton onClick={toggleLang}>

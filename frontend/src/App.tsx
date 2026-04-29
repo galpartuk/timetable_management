@@ -14,6 +14,8 @@ import ImportPage from './pages/Import';
 import ConstraintsPage from './pages/Constraints';
 import TimetablePage from './pages/Timetable';
 import LoginPage from './pages/Login';
+import AdminUsersPage from './pages/Admin/Users';
+import AdminAuditPage from './pages/Admin/Audit';
 import { getMe } from './api/client';
 
 // RTL cache
@@ -63,6 +65,8 @@ function App() {
 
   if (loading) return null;
 
+  const isSuperAdmin = user?.role === 'super_admin';
+
   return (
     <CacheProvider value={isRtl ? cacheRtl : cacheLtr}>
       <ThemeProvider theme={theme}>
@@ -76,6 +80,14 @@ function App() {
                 <Route path="/import" element={<ImportPage />} />
                 <Route path="/constraints" element={<ConstraintsPage />} />
                 <Route path="/timetable" element={<TimetablePage />} />
+                <Route
+                  path="/admin/users"
+                  element={isSuperAdmin ? <AdminUsersPage /> : <Navigate to="/" replace />}
+                />
+                <Route
+                  path="/admin/audit"
+                  element={isSuperAdmin ? <AdminAuditPage /> : <Navigate to="/" replace />}
+                />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </Layout>

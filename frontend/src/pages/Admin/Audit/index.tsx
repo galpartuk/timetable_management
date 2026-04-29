@@ -1,0 +1,176 @@
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Alert, Box, Chip, CircularProgress, FormControl, InputLabel,
+  MenuItem, Paper, Select, Tab, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Tabs, Typography,
+} from '@mui/material';
+import { CheckCircle, Cancel, Phone, Lock, Google } from '@mui/icons-material';
+import { getAuditActivities, getAuditLogins } from '../../../api/client';
+
+function parseBrowser(ua: string): string {
+  if (!ua) return '—';
+  if (ua.includes('Edg/')) return 'Edge';
+  if (ua.includes('Chrome/')) return 'Chrome';
+  if (ua.includes('Firefox/')) return 'Firefox';
+  if (ua.includes('Safari/') && !ua.includes('Chrome')) return 'Safari';
+  return 'Other';
+}
+
+function parseOS(ua: string): string {
+  if (!ua) return '';
+  if (ua.includes('Windows')) return 'Windows';
+  if (ua.includes('Mac OS')) return 'macOS';
+  if (ua.includes('Android')) return 'Android';
+  if (ua.includes('iPhone') || ua.includes('iPad')) return 'iOS';
+  if (ua.includes('Linux')) return 'Linux';
+  return '';
+}
+
+function methodIcon(method: string) {
+  if (method === 'google') return <Google fontSize="small" />;
+  if (method === 'phone') return <Phone fontSize="small" />;
+  return <Lock fontSize="small" />;
+}
+
+const filterRow = { display: 'flex', flexDirection: 'row', gap: 2, mb: 2 } as const;
+
+export default function AdminAuditPage() {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<'logins' | 'activities'>('logins');
+  const [logins, setLogins] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filterMethod, setFilterMethod] = useState<string>('');
+  const [filterSuccess, setFilterSuccess] = useState<string>('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      if (tab === 'logins') {
+        const res = await getAuditLogins({
+          method: filterMethod || undefined,
+          success: (filterSuccess as 'true' | 'false') || undefined,
+        });
+        setLogins(res.data);
+      } else {
+        const res = await getAuditActivities();
+        setActivities(res.data);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('admin.loadError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [tab, filterMethod, filterSuccess]);
+
+  return (
+    <Box>
+      <Typography variant="h4" sx={{ mb: 3 }}>{t('admin.auditTitle')}</Typography>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+        <Tab value="logins" label={t('admin.auditTabLogins')} />
+        <Tab value="activities" label={t('admin.auditTabActivities')} />
+      </Tabs>
+
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {tab === 'logins' && (
+        <Box sx={filterRow}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>{t('admin.filterMethod')}</InputLabel>
+            <Select value={filterMethod} label={t('admin.filterMethod')}
+                    onChange={(e) => setFilterMethod(e.target.value)}>
+              <MenuItem value="">{t('admin.all')}</MenuItem>
+              <MenuItem value="google">Google</MenuItem>
+              <MenuItem value="phone">Phone</MenuItem>
+              <MenuItem value="password">Password</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>{t('admin.filterStatus')}</InputLabel>
+            <Select value={filterSuccess} label={t('admin.filterStatus')}
+                    onChange={(e) => setFilterSuccess(e.target.value)}>
+              <MenuItem value="">{t('admin.all')}</MenuItem>
+              <MenuItem value="true">{t('admin.success')}</MenuItem>
+              <MenuItem value="false">{t('admin.failure')}</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
+      )}
+
+      {loading ? (
+        <CircularProgress />
+      ) : tab === 'logins' ? (
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('admin.when')}</TableCell>
+                <TableCell>{t('admin.user')}</TableCell>
+                <TableCell>{t('admin.method')}</TableCell>
+                <TableCell>{t('admin.status')}</TableCell>
+                <TableCell>{t('admin.ip')}</TableCell>
+                <TableCell>{t('admin.browser')}</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {logins.map((l) => (
+                <TableRow key={l.id}>
+                  <TableCell>{new Date(l.created_at).toLocaleString('he-IL')}</TableCell>
+                  <TableCell>{l.user_email || l.user_label || '—'}</TableCell>
+                  <TableCell>
+                    <Chip size="small" icon={methodIcon(l.method)} label={l.method} />
+                  </TableCell>
+                  <TableCell>
+                    {l.success
+                      ? <Chip size="small" icon={<CheckCircle />} label={t('admin.success')} color="success" />
+                      : <Chip size="small" icon={<Cancel />} label={t('admin.failure')} color="error" />}
+                  </TableCell>
+                  <TableCell dir="ltr">{l.ip_address || '—'}</TableCell>
+                  <TableCell>{[parseBrowser(l.user_agent), parseOS(l.user_agent)].filter(Boolean).join(' / ')}</TableCell>
+                </TableRow>
+              ))}
+              {logins.length === 0 && (
+                <TableRow><TableCell colSpan={6} align="center">{t('admin.noLogs')}</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      ) : (
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>{t('admin.when')}</TableCell>
+                <TableCell>{t('admin.user')}</TableCell>
+                <TableCell>{t('admin.action')}</TableCell>
+                <TableCell>{t('admin.details')}</TableCell>
+                <TableCell>{t('admin.ip')}</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {activities.map((a) => (
+                <TableRow key={a.id}>
+                  <TableCell>{new Date(a.created_at).toLocaleString('he-IL')}</TableCell>
+                  <TableCell>{a.user_email || a.user_label || '—'}</TableCell>
+                  <TableCell><Chip size="small" label={a.action} /></TableCell>
+                  <TableCell>
+                    <code style={{ fontSize: 12 }}>{JSON.stringify(a.details)}</code>
+                  </TableCell>
+                  <TableCell dir="ltr">{a.ip_address || '—'}</TableCell>
+                </TableRow>
+              ))}
+              {activities.length === 0 && (
+                <TableRow><TableCell colSpan={5} align="center">{t('admin.noLogs')}</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
+  );
+}
