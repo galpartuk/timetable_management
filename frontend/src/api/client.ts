@@ -1,14 +1,13 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: '/api',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Add CSRF token handling
 api.interceptors.request.use((config) => {
   const csrfToken = document.cookie
     .split('; ')
@@ -22,13 +21,49 @@ api.interceptors.request.use((config) => {
 
 export default api;
 
-// Auth
+// Auth — public
 export const login = (username: string, password: string) =>
   api.post('/auth/login/', { username, password });
+
+export const googleLogin = (credential: string) =>
+  api.post('/auth/google/', { credential });
+
+export const requestOtp = (phone: string) =>
+  api.post('/auth/request-otp/', { phone });
+
+export const verifyOtp = (userId: number, code: string) =>
+  api.post('/auth/verify-otp/', { user_id: userId, code });
 
 export const logout = () => api.post('/auth/logout/');
 
 export const getMe = () => api.get('/auth/me/');
+
+// Admin — super-admin only
+export interface AdminUserPayload {
+  full_name: string;
+  email: string;
+  phone?: string;
+  role?: string;
+  password?: string;
+  is_active?: boolean;
+}
+
+export const getAdminUsers = () => api.get('/auth/admin/users/');
+export const createAdminUser = (data: AdminUserPayload) =>
+  api.post('/auth/admin/users/', data);
+export const updateAdminUser = (id: number, data: Partial<AdminUserPayload>) =>
+  api.put(`/auth/admin/users/${id}/`, data);
+export const deactivateAdminUser = (id: number) =>
+  api.delete(`/auth/admin/users/${id}/`);
+
+export const getAuditLogins = (params?: {
+  method?: string;
+  success?: 'true' | 'false';
+  user_id?: number;
+}) => api.get('/auth/admin/audit/logins/', { params });
+
+export const getAuditActivities = () =>
+  api.get('/auth/admin/audit/activities/');
 
 // School
 export const getSchools = () => api.get('/schools/');
