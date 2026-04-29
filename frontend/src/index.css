@@ -113,6 +113,15 @@ body {
   letter-spacing: 0;
 }
 
+/* Hebrew has no uppercase. Strip the small-caps tracking that makes Hebrew
+   look broken (gaps between unrelated glyphs, no ligatures). */
+:lang(he) .MuiTypography-overline,
+:lang(he) .MuiTypography-caption,
+:lang(he) .MuiTableCell-head {
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
 :focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AppBar, Box, Drawer, IconButton, List, ListItemButton,
-  ListItemIcon, ListItemText, Toolbar, Typography, Button, Avatar, Tooltip,
+  ListItemIcon, ListItemText, Toolbar, Typography, Button, Avatar,
   useMediaQuery,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
@@ -42,7 +42,6 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isRtl = i18n.language === 'he';
   const isSuperAdmin = user?.role === 'super_admin';
 
   const menuItems: NavItem[] = [
@@ -62,7 +61,13 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
   const currentPage = allItems.find((m) => m.path === location.pathname);
 
   const handleLogout = async () => {
-    await apiLogout();
+    // Always clear local state, even if the server-side logout fails
+    // (expired session, network blip, etc.) — otherwise the user is stuck.
+    try {
+      await apiLogout();
+    } catch {
+      // ignore; local state still cleared below
+    }
     onLogout();
   };
 
@@ -105,18 +110,19 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
               boxShadow: '0 6px 16px -6px rgba(79, 70, 229, 0.6)',
               color: '#fff',
               fontWeight: 800,
-              fontSize: 16,
-              letterSpacing: '-0.02em',
+              fontSize: 14,
+              letterSpacing: 0,
+              lineHeight: 1,
             }}
           >
             מ.ש
           </Box>
-          <Box>
-            <Typography sx={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2 }} noWrap>
               {t('app.title')}
             </Typography>
-            <Typography variant="caption" sx={{ color: 'grey.500', fontSize: 11 }}>
-              {isRtl ? 'ניהול בית ספר' : 'School Manager'}
+            <Typography sx={{ color: 'grey.500', fontSize: 11, letterSpacing: 0 }} noWrap>
+              {i18n.language === 'he' ? 'ניהול בית ספר' : 'School Manager'}
             </Typography>
           </Box>
         </Box>
@@ -125,10 +131,17 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
       {/* Nav */}
       <Box sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
         <Typography
-          variant="overline"
-          sx={{ px: 4, color: 'grey.500', fontSize: 10, display: 'block', mb: 0.5 }}
+          sx={{
+            px: 4, mb: 0.5,
+            color: 'grey.500',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: i18n.language === 'he' ? 0 : '0.08em',
+            textTransform: i18n.language === 'he' ? 'none' : 'uppercase',
+            display: 'block',
+          }}
         >
-          {isRtl ? 'תפריט' : 'Menu'}
+          {i18n.language === 'he' ? 'תפריט' : 'Menu'}
         </Typography>
         <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
           {menuItems.map(renderNavItem)}
@@ -137,8 +150,15 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         {isSuperAdmin && (
           <>
             <Typography
-              variant="overline"
-              sx={{ px: 4, color: 'grey.500', fontSize: 10, display: 'block', mt: 2.5, mb: 0.5 }}
+              sx={{
+                px: 4, mt: 2.5, mb: 0.5,
+                color: 'grey.500',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: i18n.language === 'he' ? 0 : '0.08em',
+                textTransform: i18n.language === 'he' ? 'none' : 'uppercase',
+                display: 'block',
+              }}
             >
               {t('nav.adminSection')}
             </Typography>
@@ -149,7 +169,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         )}
       </Box>
 
-      {/* Footer: user card */}
+      {/* Footer: user card + logout */}
       <Box sx={{ px: 2, pt: 2 }}>
         <Box
           sx={{
@@ -157,10 +177,11 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             alignItems: 'center',
             gap: 1.5,
             p: 1.25,
+            mb: 1,
             borderRadius: 3,
             border: '1px solid',
             borderColor: 'divider',
-            background: 'grey.50',
+            background: '#fff',
           }}
         >
           <Avatar
@@ -178,24 +199,31 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             <Typography sx={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }} noWrap>
               {userName}
             </Typography>
-            <Typography variant="caption" sx={{ color: 'grey.500', fontSize: 11 }} noWrap>
-              {user?.email || (isRtl ? 'מנהל מערכת' : 'Administrator')}
+            <Typography sx={{ color: 'grey.500', fontSize: 11, letterSpacing: 0 }} noWrap>
+              {user?.email || (i18n.language === 'he' ? 'מנהל מערכת' : 'Administrator')}
             </Typography>
           </Box>
-          <Tooltip title={t('nav.logout') as string}>
-            <IconButton size="small" onClick={handleLogout} sx={{ color: 'grey.500' }}>
-              <LogoutIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
         </Box>
-        <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>
+
+        <Box sx={{ display: 'flex', gap: 0.75 }}>
           <Button
-            startIcon={<LangIcon fontSize="small" />}
-            onClick={toggleLang}
+            fullWidth
             size="small"
-            sx={{ color: 'grey.600', fontSize: 12 }}
+            variant="outlined"
+            startIcon={<LogoutIcon fontSize="small" />}
+            onClick={handleLogout}
+            sx={{ color: 'grey.700', fontSize: 13 }}
           >
-            {i18n.language === 'he' ? 'English' : 'עברית'}
+            {t('nav.logout')}
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={toggleLang}
+            sx={{ color: 'grey.700', fontSize: 13, minWidth: 'auto', px: 1.25 }}
+            aria-label="toggle language"
+          >
+            <LangIcon fontSize="small" />
           </Button>
         </Box>
       </Box>
@@ -204,13 +232,13 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', background: 'background.default' }}>
-      {/* Top bar */}
+      {/* Top bar — uses logical `ml`; emotion's RTL plugin flips for Hebrew automatically.
+          Do NOT branch on isRtl here, that double-flips. */}
       <AppBar
         position="fixed"
         sx={{
           width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
-          mr: { md: isRtl ? `${DRAWER_WIDTH}px` : 0 },
-          ml: { md: isRtl ? 0 : `${DRAWER_WIDTH}px` },
+          ml: { md: `${DRAWER_WIDTH}px` },
         }}
       >
         <Toolbar sx={{ px: { xs: 2, md: 4 } }}>
@@ -223,7 +251,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           </IconButton>
 
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="overline" sx={{ color: 'grey.500', display: 'block', lineHeight: 1, mb: 0.25 }}>
+            <Typography sx={{ color: 'grey.500', fontSize: 11, fontWeight: 600, letterSpacing: 0, lineHeight: 1, mb: 0.25 }}>
               {t('app.title')}
             </Typography>
             <Typography sx={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.012em' }} noWrap>
@@ -231,28 +259,27 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             </Typography>
           </Box>
 
-          <Button
-            onClick={toggleLang}
+          {/* Small-screen quick logout — sidebar isn't visible on mobile */}
+          <IconButton
+            onClick={handleLogout}
             size="small"
-            startIcon={<LangIcon fontSize="small" />}
-            sx={{
-              display: { xs: 'inline-flex', md: 'none' },
-              color: 'grey.600',
-            }}
+            aria-label={t('nav.logout') as string}
+            sx={{ display: { xs: 'inline-flex', md: 'none' }, color: 'grey.600' }}
           >
-            {i18n.language === 'he' ? 'EN' : 'HE'}
-          </Button>
+            <LogoutIcon fontSize="small" />
+          </IconButton>
         </Toolbar>
       </AppBar>
 
-      {/* Sidebar */}
+      {/* Sidebar — anchor="left" is auto-flipped to "right" in RTL by MUI Drawer
+          when theme.direction === 'rtl'. Don't conditional-flip here. */}
       <Box
         component="nav"
         sx={{ width: { md: DRAWER_WIDTH }, flexShrink: { md: 0 } }}
       >
         <Drawer
           variant="temporary"
-          anchor={isRtl ? 'right' : 'left'}
+          anchor="left"
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           ModalProps={{ keepMounted: true }}
@@ -267,15 +294,15 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         {isDesktop && (
           <Drawer
             variant="permanent"
-            anchor={isRtl ? 'right' : 'left'}
+            anchor="left"
             open
             sx={{
               display: { xs: 'none', md: 'block' },
               '& .MuiDrawer-paper': {
                 width: DRAWER_WIDTH,
                 boxSizing: 'border-box',
-                borderInlineStart: 'none',
-                borderInlineEnd: '1px solid rgba(20, 24, 31, 0.06)',
+                background: 'background.default',
+                borderColor: 'divider',
               },
             }}
           >
@@ -284,13 +311,12 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         )}
       </Box>
 
-      {/* Main */}
+      {/* Main content — flex:1 fills remaining space; no explicit width so RTL flows naturally */}
       <Box
         component="main"
         sx={{
           flex: 1,
           minWidth: 0,
-          width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
           mt: '68px',
           px: { xs: 2, sm: 3, md: 5 },
           py: { xs: 3, md: 4 },
