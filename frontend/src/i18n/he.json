@@ -1,0 +1,144 @@
+{
+  "app": {
+    "title": "ניהול מערכת שעות",
+    "loading": "טוען..."
+  },
+  "nav": {
+    "dashboard": "לוח בקרה",
+    "data": "נתונים",
+    "import": "ייבוא",
+    "constraints": "אילוצים",
+    "timetable": "מערכת שעות",
+    "settings": "הגדרות",
+    "logout": "התנתק"
+  },
+  "dashboard": {
+    "title": "לוח בקרה",
+    "teachers": "מורים",
+    "subjects": "מקצועות",
+    "classes": "כיתות",
+    "assignments": "שיבוצים",
+    "recentTimetables": "מערכות שעות אחרונות",
+    "noTimetables": "אין מערכות שעות",
+    "quickActions": "פעולות מהירות",
+    "importExcel": "ייבוא מאקסל",
+    "generateTimetable": "צור מערכת שעות"
+  },
+  "data": {
+    "title": "ניהול נתונים",
+    "teachers": "מורים",
+    "subjects": "מקצועות",
+    "classes": "כיתות",
+    "assignments": "שיבוצי הוראה",
+    "add": "הוסף",
+    "edit": "ערוך",
+    "delete": "מחק",
+    "save": "שמור",
+    "cancel": "ביטול",
+    "search": "חיפוש...",
+    "noData": "אין נתונים להצגה",
+    "confirmDelete": "האם אתה בטוח שברצונך למחוק?"
+  },
+  "teacher": {
+    "firstName": "שם פרטי",
+    "lastName": "שם משפחה",
+    "email": "אימייל",
+    "phone": "טלפון",
+    "maxHours": "שעות מקסימום",
+    "dayOff": "יום חופש"
+  },
+  "daysOff": {
+    "import": "ייבוא ימי חופש",
+    "updated": "מורים עודכנו",
+    "errors": "שגיאות"
+  },
+  "subject": {
+    "nameHe": "שם המקצוע",
+    "nameEn": "שם באנגלית",
+    "color": "צבע"
+  },
+  "class": {
+    "grade": "שכבה",
+    "number": "מספר",
+    "type": "סוג",
+    "studentCount": "מספר תלמידים",
+    "regular": "רגילה",
+    "specialEd": "חינוך מיוחד",
+    "leadership": "מנהיגות"
+  },
+  "assignment": {
+    "teacher": "מורה",
+    "subject": "מקצוע",
+    "class": "כיתה",
+    "weeklyHours": "שעות שבועיות",
+    "bagrutHours": "גמול בגרות",
+    "bagrutCode": "סמל שאלון",
+    "notes": "הערות"
+  },
+  "import": {
+    "title": "ייבוא מאקסל",
+    "dropzone": "גרור קובץ אקסל לכאן או לחץ לבחירה",
+    "uploading": "מעלה...",
+    "success": "הייבוא הושלם בהצלחה!",
+    "subjectsImported": "מקצועות שיובאו",
+    "teachersImported": "מורים שיובאו",
+    "assignmentsImported": "שיבוצים שיובאו",
+    "errors": "שגיאות",
+    "upload": "העלה קובץ"
+  },
+  "constraints": {
+    "title": "אילוצים",
+    "add": "הוסף אילוץ",
+    "name": "שם",
+    "type": "סוג",
+    "priority": "עדיפות",
+    "active": "פעיל",
+    "hard": "חובה",
+    "soft": "העדפה",
+    "teacherAvailability": "זמינות מורה",
+    "maxDailyClass": "מקסימום שעות יומי לכיתה",
+    "maxDailyTeacher": "מקסימום שעות יומי למורה",
+    "subjectSpread": "פיזור מקצוע",
+    "consecutiveHours": "שיעורים צמודים",
+    "preferredPeriods": "שיעורים מועדפים",
+    "noLastPeriod": "לא בשיעור אחרון",
+    "custom": "מותאם אישית",
+    "maxPerDaySubject": "מקסימום שיעורים יומי למקצוע",
+    "maxHours": "מקסימום שעות",
+    "maxPerDay": "מקסימום ביום",
+    "all": "הכול"
+  },
+  "timetable": {
+    "title": "מערכת שעות",
+    "generate": "צור מערכת",
+    "generating": "יוצר מערכת שעות...",
+    "viewByClass": "תצוגת כיתה",
+    "viewByTeacher": "תצוגת מורה",
+    "selectClass": "בחר כיתה",
+    "selectTeacher": "בחר מורה",
+    "period": "שיעור",
+    "noTimetable": "אין מערכת שעות. לחץ 'צור מערכת' להתחיל.",
+    "name": "שם",
+    "year": "שנת לימודים",
+    "status": "סטטוס",
+    "created": "נוצר",
+    "draft": "טיוטה",
+    "completed": "הושלם",
+    "failed": "נכשל",
+    "published": "פורסם"
+  },
+  "days": {
+    "sunday": "ראשון",
+    "monday": "שני",
+    "tuesday": "שלישי",
+    "wednesday": "רביעי",
+    "thursday": "חמישי"
+  },
+  "login": {
+    "title": "התחברות",
+    "username": "שם משתמש",
+    "password": "סיסמה",
+    "submit": "התחבר",
+    "error": "שם משתמש או סיסמה שגויים"
+  }
+}

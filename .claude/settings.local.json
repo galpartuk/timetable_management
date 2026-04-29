@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/django-admin.exe startproject:*)",
+      "Bash(../.venv/Scripts/python.exe manage.py startapp users apps/users)",
+      "Bash(../.venv/Scripts/python.exe manage.py startapp school apps/school)",
+      "Bash(../.venv/Scripts/python.exe manage.py startapp subjects apps/subjects)",
+      "Bash(../.venv/Scripts/python.exe manage.py startapp scheduling apps/scheduling)",
+      "Bash(../.venv/Scripts/python.exe manage.py startapp import_export apps/import_export)",
+      "Bash(../.venv/Scripts/python.exe:*)",
+      "Bash(npx create-vite@latest frontend --template react-ts)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

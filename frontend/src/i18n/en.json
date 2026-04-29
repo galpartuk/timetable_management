@@ -1,0 +1,144 @@
+{
+  "app": {
+    "title": "Timetable Management",
+    "loading": "Loading..."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "data": "Data",
+    "import": "Import",
+    "constraints": "Constraints",
+    "timetable": "Timetable",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "teachers": "Teachers",
+    "subjects": "Subjects",
+    "classes": "Classes",
+    "assignments": "Assignments",
+    "recentTimetables": "Recent Timetables",
+    "noTimetables": "No timetables yet",
+    "quickActions": "Quick Actions",
+    "importExcel": "Import from Excel",
+    "generateTimetable": "Generate Timetable"
+  },
+  "data": {
+    "title": "Data Management",
+    "teachers": "Teachers",
+    "subjects": "Subjects",
+    "classes": "Classes",
+    "assignments": "Teaching Assignments",
+    "add": "Add",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "search": "Search...",
+    "noData": "No data to display",
+    "confirmDelete": "Are you sure you want to delete?"
+  },
+  "teacher": {
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "email": "Email",
+    "phone": "Phone",
+    "maxHours": "Max Hours",
+    "dayOff": "Day Off"
+  },
+  "daysOff": {
+    "import": "Import Days Off",
+    "updated": "teachers updated",
+    "errors": "Errors"
+  },
+  "subject": {
+    "nameHe": "Subject Name (Hebrew)",
+    "nameEn": "Subject Name (English)",
+    "color": "Color"
+  },
+  "class": {
+    "grade": "Grade",
+    "number": "Number",
+    "type": "Type",
+    "studentCount": "Student Count",
+    "regular": "Regular",
+    "specialEd": "Special Education",
+    "leadership": "Leadership"
+  },
+  "assignment": {
+    "teacher": "Teacher",
+    "subject": "Subject",
+    "class": "Class",
+    "weeklyHours": "Weekly Hours",
+    "bagrutHours": "Bagrut Bonus",
+    "bagrutCode": "Bagrut Code",
+    "notes": "Notes"
+  },
+  "import": {
+    "title": "Import from Excel",
+    "dropzone": "Drag an Excel file here or click to select",
+    "uploading": "Uploading...",
+    "success": "Import completed successfully!",
+    "subjectsImported": "Subjects imported",
+    "teachersImported": "Teachers imported",
+    "assignmentsImported": "Assignments imported",
+    "errors": "Errors",
+    "upload": "Upload File"
+  },
+  "constraints": {
+    "title": "Constraints",
+    "add": "Add Constraint",
+    "name": "Name",
+    "type": "Type",
+    "priority": "Priority",
+    "active": "Active",
+    "hard": "Required",
+    "soft": "Preferred",
+    "teacherAvailability": "Teacher Availability",
+    "maxDailyClass": "Max Daily Hours (Class)",
+    "maxDailyTeacher": "Max Daily Hours (Teacher)",
+    "subjectSpread": "Subject Spread",
+    "consecutiveHours": "Consecutive Hours",
+    "preferredPeriods": "Preferred Periods",
+    "noLastPeriod": "No Last Period",
+    "custom": "Custom",
+    "maxPerDaySubject": "Max Subject Hours Per Day",
+    "maxHours": "Max Hours",
+    "maxPerDay": "Max Per Day",
+    "all": "All"
+  },
+  "timetable": {
+    "title": "Timetable",
+    "generate": "Generate",
+    "generating": "Generating timetable...",
+    "viewByClass": "Class View",
+    "viewByTeacher": "Teacher View",
+    "selectClass": "Select Class",
+    "selectTeacher": "Select Teacher",
+    "period": "Period",
+    "noTimetable": "No timetable. Click 'Generate' to start.",
+    "name": "Name",
+    "year": "Academic Year",
+    "status": "Status",
+    "created": "Created",
+    "draft": "Draft",
+    "completed": "Completed",
+    "failed": "Failed",
+    "published": "Published"
+  },
+  "days": {
+    "sunday": "Sunday",
+    "monday": "Monday",
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday": "Thursday"
+  },
+  "login": {
+    "title": "Login",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Login",
+    "error": "Invalid username or password"
+  }
+}
