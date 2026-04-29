@@ -16,6 +16,7 @@ import TimetablePage from './pages/Timetable';
 import LoginPage from './pages/Login';
 import AdminUsersPage from './pages/Admin/Users';
 import AdminAuditPage from './pages/Admin/Audit';
+import AiAssistant, { AiAssistantProvider } from './components/AiAssistant';
 import { getMe } from './api/client';
 
 const cacheRtl = createCache({
@@ -495,8 +496,9 @@ function App() {
         <CssBaseline />
         <BrowserRouter>
           {user ? (
-            <Layout user={user} onLogout={() => setUser(null)}>
-              <Routes>
+            <AiAssistantProvider>
+              <Layout user={user} onLogout={() => setUser(null)}>
+                <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/data" element={<DataEntry />} />
                 <Route path="/import" element={<ImportPage />} />
@@ -512,7 +514,9 @@ function App() {
                 />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
+              <AiAssistant />
             </Layout>
+            </AiAssistantProvider>
           ) : (
             <Routes>
               <Route path="*" element={<LoginPage onLogin={setUser} />} />

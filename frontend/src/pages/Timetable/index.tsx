@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useAiAssistantContext } from '../../components/AiAssistant';
 import {
   Box, Typography, Card, CardContent, Button, ToggleButtonGroup,
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
@@ -78,6 +79,25 @@ export default function TimetablePage() {
     const key = `${entry.day}-${entry.period}`;
     grid[key] = entry;
   });
+
+  // Tell the AI assistant which timetable / view we're looking at, and
+  // expose a few one-click prompts the user can pick from.
+  useAiAssistantContext(useMemo(() => ({
+    module: 'timetable',
+    viewState: {
+      timetable_id: selectedTT?.id ?? null,
+      timetable_name: selectedTT?.name ?? null,
+      timetable_status: selectedTT?.status ?? null,
+      view_mode: viewMode,
+      selected_entity_id: selectedId || null,
+      visible_entry_count: entries.length,
+    },
+    quickActions: [
+      { label: 'מצא התנגשויות במערכת השעות', prompt: 'בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.' },
+      { label: 'נקוד את המערכת ותן תובנות', prompt: 'תן לי סקירה של המערכת הנוכחית – כמה שיעורים, כמה מורים, ומה איכות הפיזור.' },
+      { label: 'הצע אופטימיזציות', prompt: 'הצע שיפורים אפשריים למערכת הנוכחית בהתבסס על התנגשויות וצפיפות.' },
+    ],
+  }), [selectedTT?.id, selectedTT?.name, selectedTT?.status, viewMode, selectedId, entries.length]));
 
   return (
     <Box>
