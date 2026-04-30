@@ -8,9 +8,18 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Dict
 
+from apps.school.models import SchoolClass, TimeSlot
 from apps.scheduling.models import Timetable, TimetableEntry
+from apps.subjects.models import Subject, Teacher, TeachingAssignment
 
 from .base import Tool, ToolContext, register_tool
+
+
+# Default school for tools that operate against a single school. Pulled from
+# view_state when the FE provided it; otherwise the first school in the DB
+# (matches the rest of the app's "default school = id 1" convention).
+def _default_school_id(ctx: ToolContext) -> int | None:
+    return ctx.view_state.get('school_id') or 1
 
 
 # ── read-only ─────────────────────────────────────────────────────────────
@@ -178,4 +187,293 @@ register_tool(Tool(
     modules=['timetable'],
     requires_confirmation=True,
     preview_template='להעביר שיעור #{input.entry_id} למשבצת #{input.target_time_slot_id}',
+))
+
+
+# ── discovery (read-only) ─────────────────────────────────────────────────
+# These let the model translate "the 8th grade class" into an integer ID
+# without forcing the user to dig it out themselves.
+
+def _list_classes(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    qs = SchoolClass.objects.filter(grade__school_id=school_id).select_related('grade')
+    return {
+        'count': qs.count(),
+        'classes': [{
+            'id': c.id,
+            'display_name': c.display_name,
+            'grade': c.grade.name,
+            'grade_level': c.grade.level,
+            'number': c.number,
+            'class_type': c.class_type,
+            'student_count': c.student_count,
+        } for c in qs],
+    }
+
+
+register_tool(Tool(
+    name='list_classes',
+    description='List every school class with id, name (e.g. "ז1"), grade level, and student count.',
+    input_schema={
+        'type': 'object',
+        'properties': {'school_id': {'type': 'integer'}},
+    },
+    handler=_list_classes,
+    modules=['timetable', 'data'],
+))
+
+
+def _list_teachers(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    qs = Teacher.objects.filter(school_id=school_id)
+    return {
+        'count': qs.count(),
+        'teachers': [{
+            'id': t.id,
+            'full_name': str(t),
+            'first_name': t.first_name,
+            'last_name': t.last_name,
+            'max_weekly_hours': t.max_weekly_hours,
+            'day_off': t.day_off,
+            'day_off_name': t.get_day_off_display() if t.day_off else None,
+        } for t in qs],
+    }
+
+
+register_tool(Tool(
+    name='list_teachers',
+    description='List every teacher with id, full name, max weekly hours, and day off (if any).',
+    input_schema={
+        'type': 'object',
+        'properties': {'school_id': {'type': 'integer'}},
+    },
+    handler=_list_teachers,
+    modules=['timetable', 'data'],
+))
+
+
+def _list_subjects(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    qs = Subject.objects.filter(school_id=school_id)
+    return {
+        'count': qs.count(),
+        'subjects': [{
+            'id': s.id,
+            'name_he': s.name_he,
+            'name_en': s.name_en,
+            'requires_consecutive': s.requires_consecutive,
+        } for s in qs],
+    }
+
+
+register_tool(Tool(
+    name='list_subjects',
+    description='List every subject (course) with id, Hebrew name, English name.',
+    input_schema={
+        'type': 'object',
+        'properties': {'school_id': {'type': 'integer'}},
+    },
+    handler=_list_subjects,
+    modules=['timetable', 'data'],
+))
+
+
+def _list_time_slots(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    qs = TimeSlot.objects.filter(school_id=school_id)
+    return {
+        'count': qs.count(),
+        'time_slots': [{
+            'id': ts.id,
+            'day': ts.day,
+            'day_name': ts.get_day_display(),
+            'period': ts.period,
+            'start_time': ts.start_time.strftime('%H:%M'),
+            'end_time': ts.end_time.strftime('%H:%M'),
+        } for ts in qs],
+    }
+
+
+register_tool(Tool(
+    name='list_time_slots',
+    description=(
+        'List every time slot with id, day (1=Sun..5=Thu), period number, and times. '
+        'Use this to find the TimeSlot.id when the user refers to "Monday period 3".'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {'school_id': {'type': 'integer'}},
+    },
+    handler=_list_time_slots,
+    modules=['timetable'],
+))
+
+
+def _list_assignments(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Teaching assignments that the solver consumes. Without these, the
+    generator has nothing to schedule."""
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    class_id = input.get('class_id')
+    qs = (
+        TeachingAssignment.objects
+        .filter(school_class__grade__school_id=school_id)
+        .select_related('teacher', 'subject', 'school_class', 'school_class__grade')
+    )
+    if class_id:
+        qs = qs.filter(school_class_id=class_id)
+    return {
+        'count': qs.count(),
+        'assignments': [{
+            'id': a.id,
+            'teacher': str(a.teacher),
+            'teacher_id': a.teacher_id,
+            'subject': a.subject.name_he,
+            'subject_id': a.subject_id,
+            'class': a.school_class.display_name,
+            'class_id': a.school_class_id,
+            'weekly_hours': float(a.weekly_hours),
+        } for a in qs[:300]],
+    }
+
+
+register_tool(Tool(
+    name='list_assignments',
+    description=(
+        'List teaching assignments (which teacher teaches which subject to which class, '
+        'and for how many weekly hours). The timetable generator uses these as its input. '
+        'If the count is 0, the generator has nothing to do — the user needs to import '
+        'an Excel file or add assignments manually first.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'school_id': {'type': 'integer'},
+            'class_id': {'type': 'integer', 'description': 'Filter to one class only.'},
+        },
+    },
+    handler=_list_assignments,
+    modules=['timetable', 'data'],
+))
+
+
+# ── creation + generation (mutating, require confirmation) ────────────────
+
+def _create_timetable(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    name = (input.get('name') or '').strip()
+    academic_year = (input.get('academic_year') or '').strip()
+    school_id = input.get('school_id') or _default_school_id(ctx)
+    if not name:
+        return {'error': 'name is required'}
+    if not academic_year:
+        return {'error': 'academic_year is required (e.g. "2026-2027")'}
+    tt = Timetable.objects.create(
+        school_id=school_id,
+        name=name,
+        academic_year=academic_year,
+        status=Timetable.Status.DRAFT,
+    )
+    return {
+        'ok': True,
+        'timetable_id': tt.id,
+        'name': tt.name,
+        'academic_year': tt.academic_year,
+        'status': tt.status,
+    }
+
+
+register_tool(Tool(
+    name='create_timetable',
+    description=(
+        'Create a new (empty) timetable record. After creation it has status="draft" '
+        'with no entries. Run the generator afterwards to fill it in, or add entries manually.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string', 'description': 'Human-readable name, e.g. "מערכת תשפ״ז"'},
+            'academic_year': {'type': 'string', 'description': 'e.g. "2026-2027"'},
+            'school_id': {'type': 'integer'},
+        },
+        'required': ['name', 'academic_year'],
+    },
+    handler=_create_timetable,
+    modules=['timetable', 'global'],
+    requires_confirmation=True,
+    preview_template='ליצור מערכת חדשה: "{input.name}" לשנת {input.academic_year}',
+))
+
+
+def _run_generator(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Kick off the OR-Tools solver against an existing timetable.
+
+    Synchronous on purpose: the SSE tool-execution path is the user's
+    "loading" UI — they're staring at a confirmation card and waiting for
+    the result. For very large schools this could be slow; if it becomes a
+    problem, switch to a Celery task and return a job_id here.
+    """
+    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    if not timetable_id:
+        return {'error': 'timetable_id is required'}
+
+    tt = Timetable.objects.filter(id=timetable_id).first()
+    if not tt:
+        return {'error': f'timetable {timetable_id} not found'}
+
+    # Refuse if there are no assignments to schedule — saves the user a
+    # 30-second wait that would only end in failure.
+    has_assignments = TeachingAssignment.objects.filter(
+        school_class__grade__school_id=tt.school_id,
+    ).exists()
+    if not has_assignments:
+        return {
+            'error': (
+                'No teaching assignments exist for this school. The generator has '
+                'nothing to schedule. Import an Excel file or add assignments first.'
+            ),
+        }
+
+    # Mirror the existing /api/timetables/{id}/generate/ behaviour.
+    tt.status = Timetable.Status.GENERATING
+    tt.save(update_fields=['status'])
+    try:
+        from solver.engine import solve_timetable
+        success = solve_timetable(tt)
+        tt.status = (
+            Timetable.Status.COMPLETED if success else Timetable.Status.FAILED
+        )
+        tt.save(update_fields=['status'])
+    except Exception as exc:
+        tt.status = Timetable.Status.FAILED
+        tt.solver_log = str(exc)
+        tt.save(update_fields=['status', 'solver_log'])
+        return {'error': f'solver crashed: {exc}', 'status': tt.status}
+
+    return {
+        'ok': success,
+        'timetable_id': tt.id,
+        'status': tt.status,
+        'entries_created': TimetableEntry.objects.filter(timetable=tt).count(),
+    }
+
+
+register_tool(Tool(
+    name='run_generator',
+    description=(
+        'Run the OR-Tools solver to fill a timetable with entries based on the '
+        'school\'s teaching assignments and constraints. Mutating: replaces any '
+        'existing entries on this timetable. Can take 30s+ for large schools.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'timetable_id': {
+                'type': 'integer',
+                'description': 'Timetable to (re)generate. Defaults to the one open in the UI.',
+            },
+        },
+    },
+    handler=_run_generator,
+    modules=['timetable'],
+    requires_confirmation=True,
+    preview_template='להריץ את הסולבר על מערכת #{input.timetable_id} (יכול להחליף שיעורים קיימים)',
 ))
