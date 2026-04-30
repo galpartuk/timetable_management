@@ -8,4 +8,5 @@ urlpatterns = [
     path('api/', include('apps.scheduling.urls')),
     path('api/', include('apps.import_export.urls')),
     path('api/auth/', include('apps.users.urls')),
+    path('api/ai/', include('apps.ai_assistant.urls')),
 ]

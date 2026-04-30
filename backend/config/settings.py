@@ -2,9 +2,16 @@
 Django settings for timetable management project.
 """
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load secrets from backend/.env (gitignored). Real production should use a
+# proper secret manager.
+load_dotenv(BASE_DIR / '.env')
 
 SECRET_KEY = 'django-insecure-+h%hbanz5xpflqi94#dhpdz10)z)0xwt^=7rig=0#a8py1i^81'
 
@@ -29,7 +36,12 @@ INSTALLED_APPS = [
     'apps.subjects',
     'apps.scheduling',
     'apps.import_export',
+    'apps.ai_assistant',
 ]
+
+# AI assistant
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
