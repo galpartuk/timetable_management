@@ -4,15 +4,36 @@ import json
 
 from django.http import StreamingHttpResponse
 from rest_framework import permissions, status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, renderer_classes
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.response import Response
 
 from .service import chat_stream, execute_tool
 from .tools.base import tools_for_module
 
 
+class EventStreamRenderer(BaseRenderer):
+    """Lets DRF accept `Accept: text/event-stream` requests without 406ing.
+
+    The chat view returns a StreamingHttpResponse directly, which DRF passes
+    through without invoking this renderer. This class exists only so DRF's
+    content negotiation has a matching renderer for the SSE Accept header.
+    For the rare error response (e.g. 400 on bad body) we fall back to JSON
+    via the second renderer in the list.
+    """
+    media_type = 'text/event-stream'
+    format = 'eventstream'
+    charset = 'utf-8'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        if isinstance(data, (bytes, str)):
+            return data
+        return json.dumps(data).encode('utf-8')
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@renderer_classes([EventStreamRenderer, JSONRenderer])
 def chat_view(request):
     """Stream a chat turn. Body: {module, view_state, messages}."""
     body = request.data or {}
