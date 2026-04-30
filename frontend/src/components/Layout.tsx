@@ -18,6 +18,7 @@ import {
   Logout as LogoutIcon,
   ManageAccounts as UsersIcon,
   History as AuditIcon,
+  IosShare as ExportIcon,
 } from '@mui/icons-material';
 import { logout as apiLogout } from '../api/client';
 
@@ -50,6 +51,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     { text: t('nav.data'), icon: <DataIcon fontSize="small" />, path: '/data' },
     { text: t('nav.constraints'), icon: <ConstraintIcon fontSize="small" />, path: '/constraints' },
     { text: t('nav.import'), icon: <UploadIcon fontSize="small" />, path: '/import' },
+    { text: t('nav.manage'), icon: <ExportIcon fontSize="small" />, path: '/manage' },
   ];
 
   const adminItems: NavItem[] = [

@@ -1,13 +1,25 @@
+import io
+
+from django.db import transaction
+from django.http import HttpResponse
 from rest_framework import status
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.school.models import School
+from apps.scheduling.models import Timetable, TimetableEntry
+from apps.subjects.models import Subject, Teacher, TeachingAssignment
 
+from .exporter import SHEET_BUILDERS, SUPER_ADMIN_ONLY_SHEETS, build_workbook
 from .models import ImportLog
 from .parser import parse_timetable_excel
 from .parser_days_off import parse_days_off_excel
+
+
+def _is_super_admin(user) -> bool:
+    return getattr(getattr(user, 'profile', None), 'role', None) == 'super_admin'
 
 
 @api_view(['POST'])
@@ -94,3 +106,180 @@ def import_logs(request):
         'errors': log.errors,
     } for log in logs[:20]]
     return Response(data)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_export_options(request):
+    """Tells the FE which sheets are available + which require super-admin.
+    Used to render the checkbox grid."""
+    is_sa = _is_super_admin(request.user)
+    return Response({
+        'sheets': sorted(SHEET_BUILDERS.keys()),
+        'super_admin_only': sorted(SUPER_ADMIN_ONLY_SHEETS),
+        'is_super_admin': is_sa,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def export_excel(request):
+    """Build a multi-sheet xlsx based on the spec and stream it back.
+
+    Body: {school_id?, timetable_id?, sheets: [..]}
+    Response: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    """
+    spec = request.data or {}
+    sheets = spec.get('sheets') or []
+    if not isinstance(sheets, list) or not sheets:
+        return Response({'error': 'sheets must be a non-empty list'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    is_sa = _is_super_admin(request.user)
+    # Strip super-admin-only sheets early so non-admins get a friendlier error
+    # before we even start building the workbook.
+    forbidden = [s for s in sheets if s in SUPER_ADMIN_ONLY_SHEETS and not is_sa]
+    if forbidden:
+        return Response(
+            {'error': f'super_admin required for: {", ".join(forbidden)}'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    wb = build_workbook(spec, is_super_admin=is_sa)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    timetable_id = spec.get('timetable_id')
+    filename = f'timetable_export_{timetable_id or "all"}.xlsx'
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BULK DELETE
+# ─────────────────────────────────────────────────────────────────────────
+# Each operation is its own endpoint so they can be permission-checked
+# individually and the FE shows a clear "this will delete X" preview.
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_timetable(request, timetable_id: int):
+    """Delete a single timetable. Cascades to its entries via the FK."""
+    tt = Timetable.objects.filter(id=timetable_id).first()
+    if not tt:
+        return Response({'error': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+    name = tt.name
+    entry_count = TimetableEntry.objects.filter(timetable=tt).count()
+    tt.delete()
+    return Response({'ok': True, 'deleted': name, 'entries_deleted': entry_count})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def clear_timetable_entries(request, timetable_id: int):
+    """Wipe every TimetableEntry on a timetable but keep the timetable
+    record (so the user can re-run the generator on it)."""
+    tt = Timetable.objects.filter(id=timetable_id).first()
+    if not tt:
+        return Response({'error': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+    deleted, _ = TimetableEntry.objects.filter(timetable=tt).delete()
+    tt.status = Timetable.Status.DRAFT
+    tt.save(update_fields=['status'])
+    return Response({'ok': True, 'entries_deleted': deleted})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def bulk_delete(request):
+    """Multi-purpose destructive operations. Body: {operation, school_id?}.
+
+    Operations:
+      - clear_assignments      remove all TeachingAssignments for school
+      - clear_all_timetables   remove every Timetable for school (cascades)
+      - clear_subjects         remove all Subjects (only if not referenced)
+      - clear_teachers         remove all Teachers (only if not referenced)
+      - wipe_school_data       super-admin only — nukes timetables,
+                               assignments, constraints, entries. Keeps
+                               teachers, subjects, classes, time slots.
+    """
+    op = (request.data or {}).get('operation')
+    school_id = (request.data or {}).get('school_id') or 1
+    if not School.objects.filter(id=school_id).exists():
+        return Response({'error': f'school {school_id} not found'},
+                        status=status.HTTP_404_NOT_FOUND)
+
+    is_sa = _is_super_admin(request.user)
+    summary: dict = {}
+
+    if op == 'clear_assignments':
+        n, _ = TeachingAssignment.objects.filter(school_class__grade__school_id=school_id).delete()
+        summary['assignments_deleted'] = n
+
+    elif op == 'clear_all_timetables':
+        # Cascade handles entries.
+        with transaction.atomic():
+            entries = TimetableEntry.objects.filter(timetable__school_id=school_id).count()
+            tts, _ = Timetable.objects.filter(school_id=school_id).delete()
+            summary['timetables_deleted'] = tts
+            summary['entries_deleted'] = entries
+
+    elif op == 'clear_subjects':
+        # Refuse if any subject is referenced by an assignment or entry —
+        # that would silently nuke history. Make the user clear those first.
+        if (
+            TeachingAssignment.objects.filter(subject__school_id=school_id).exists()
+            or TimetableEntry.objects.filter(subject__school_id=school_id).exists()
+        ):
+            return Response({
+                'error': 'subjects are referenced by assignments or timetable entries; '
+                         'clear those first',
+            }, status=status.HTTP_409_CONFLICT)
+        n, _ = Subject.objects.filter(school_id=school_id).delete()
+        summary['subjects_deleted'] = n
+
+    elif op == 'clear_teachers':
+        if (
+            TeachingAssignment.objects.filter(teacher__school_id=school_id).exists()
+            or TimetableEntry.objects.filter(teacher__school_id=school_id).exists()
+        ):
+            return Response({
+                'error': 'teachers are referenced by assignments or timetable entries; '
+                         'clear those first',
+            }, status=status.HTTP_409_CONFLICT)
+        n, _ = Teacher.objects.filter(school_id=school_id).delete()
+        summary['teachers_deleted'] = n
+
+    elif op == 'wipe_school_data':
+        if not is_sa:
+            return Response({'error': 'super_admin required'},
+                            status=status.HTTP_403_FORBIDDEN)
+        with transaction.atomic():
+            from apps.scheduling.models import Constraint
+            entries = TimetableEntry.objects.filter(timetable__school_id=school_id).count()
+            tts = Timetable.objects.filter(school_id=school_id).count()
+            asn = TeachingAssignment.objects.filter(school_class__grade__school_id=school_id).count()
+            cons = Constraint.objects.filter(school_id=school_id).count()
+            Timetable.objects.filter(school_id=school_id).delete()  # cascades entries
+            TeachingAssignment.objects.filter(school_class__grade__school_id=school_id).delete()
+            Constraint.objects.filter(school_id=school_id).delete()
+            summary = {
+                'timetables_deleted': tts,
+                'entries_deleted': entries,
+                'assignments_deleted': asn,
+                'constraints_deleted': cons,
+            }
+
+    else:
+        return Response({'error': f'unknown operation {op!r}'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({'ok': True, 'operation': op, 'summary': summary})

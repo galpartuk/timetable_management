@@ -6,11 +6,11 @@ import {
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Stack,
 } from '@mui/material';
-import { CalendarMonth, Add, AutoAwesome } from '@mui/icons-material';
+import { CalendarMonth, Add, AutoAwesome, DeleteOutlined } from '@mui/icons-material';
 import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
-  getClasses, getTeachers,
+  getClasses, getTeachers, deleteTimetable,
 } from '../../api/client';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
@@ -116,6 +116,28 @@ export default function TimetablePage() {
         <Stack direction="row" spacing={1.5}>
           <Button variant="outlined" startIcon={<Add />} onClick={() => setShowCreate(true)}>
             {t('data.add')}
+          </Button>
+          <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteOutlined />}
+            disabled={!selectedTT}
+            onClick={async () => {
+              if (!selectedTT) return;
+              if (!confirm(`למחוק את "${selectedTT.name}"? הפעולה אינה הפיכה.`)) return;
+              try {
+                await deleteTimetable(selectedTT.id);
+                const r = await getTimetables();
+                const list = r.data.results ?? [];
+                setTimetables(list);
+                setSelectedTT(list[0] ?? null);
+                setEntries([]);
+              } catch (e: any) {
+                setError(e.response?.data?.error || 'מחיקה נכשלה');
+              }
+            }}
+          >
+            מחק
           </Button>
           <Button
             variant="contained"

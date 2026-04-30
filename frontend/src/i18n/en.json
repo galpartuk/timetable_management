@@ -11,6 +11,7 @@
     "timetable": "Timetable",
     "settings": "Settings",
     "logout": "Logout",
+    "manage": "Export & Manage",
     "adminSection": "Administration",
     "adminUsers": "User Management",
     "adminAudit": "Audit Log"
