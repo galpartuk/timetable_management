@@ -6,11 +6,11 @@ import {
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Stack,
 } from '@mui/material';
-import { CalendarMonth, Add, AutoAwesome } from '@mui/icons-material';
+import { CalendarMonth, Add, AutoAwesome, DeleteOutlined } from '@mui/icons-material';
 import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
-  getClasses, getTeachers,
+  getClasses, getTeachers, deleteTimetable,
 } from '../../api/client';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
@@ -93,9 +93,10 @@ export default function TimetablePage() {
       visible_entry_count: entries.length,
     },
     quickActions: [
-      { label: 'מצא התנגשויות במערכת השעות', prompt: 'בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.' },
+      { label: 'צור מערכת חדשה והפק אותה', prompt: 'צור מערכת שעות חדשה לשנת 2026-2027 בשם "מערכת חדשה" והפעל את הסולבר.' },
+      { label: 'מצא התנגשויות במערכת', prompt: 'בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.' },
       { label: 'נקוד את המערכת ותן תובנות', prompt: 'תן לי סקירה של המערכת הנוכחית – כמה שיעורים, כמה מורים, ומה איכות הפיזור.' },
-      { label: 'הצע אופטימיזציות', prompt: 'הצע שיפורים אפשריים למערכת הנוכחית בהתבסס על התנגשויות וצפיפות.' },
+      { label: 'הראה לי את שיבוצי ההוראה', prompt: 'הצג את כל שיבוצי ההוראה הקיימים, כדי שאוכל לראות מה הסולבר מקבל כקלט.' },
     ],
   }), [selectedTT?.id, selectedTT?.name, selectedTT?.status, viewMode, selectedId, entries.length]));
 
@@ -115,6 +116,28 @@ export default function TimetablePage() {
         <Stack direction="row" spacing={1.5}>
           <Button variant="outlined" startIcon={<Add />} onClick={() => setShowCreate(true)}>
             {t('data.add')}
+          </Button>
+          <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteOutlined />}
+            disabled={!selectedTT}
+            onClick={async () => {
+              if (!selectedTT) return;
+              if (!confirm(`למחוק את "${selectedTT.name}"? הפעולה אינה הפיכה.`)) return;
+              try {
+                await deleteTimetable(selectedTT.id);
+                const r = await getTimetables();
+                const list = r.data.results ?? [];
+                setTimetables(list);
+                setSelectedTT(list[0] ?? null);
+                setEntries([]);
+              } catch (e: any) {
+                setError(e.response?.data?.error || 'מחיקה נכשלה');
+              }
+            }}
+          >
+            מחק
           </Button>
           <Button
             variant="contained"

@@ -1,0 +1,439 @@
+"""Excel exporter — builds a multi-sheet workbook from a `spec` dict.
+
+The spec is a flat dict like:
+    {
+        'timetable_id': 1,
+        'school_id': 1,
+        'sheets': [
+            'timetable_by_class', 'timetable_by_teacher', 'timetable_flat',
+            'teachers', 'subjects', 'classes', 'time_slots', 'rooms',
+            'assignments', 'constraints', 'conflicts',
+            'import_logs', 'audit_logins', 'audit_activities', 'users',
+        ],
+    }
+
+Each sheet type maps to a `_build_*` function below. New sheet = add a
+function and register it in SHEET_BUILDERS. The view layer enforces
+permission checks before audit/users sheets are produced.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any, Callable, Dict, List
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
+
+
+# ── styling helpers ──────────────────────────────────────────────────────
+HEADER_FONT = Font(bold=True, color='FFFFFF', size=11)
+HEADER_FILL = PatternFill('solid', fgColor='4F46E5')
+SUBHEADER_FILL = PatternFill('solid', fgColor='F1F3F7')
+GRID_FONT = Font(size=10)
+WRAP = Alignment(wrap_text=True, vertical='center', horizontal='center')
+
+
+def _style_header(ws: Worksheet, row: int, last_col: int) -> None:
+    for c in range(1, last_col + 1):
+        cell = ws.cell(row=row, column=c)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+
+def _autosize(ws: Worksheet, min_width: int = 10, max_width: int = 50) -> None:
+    for col_idx, col in enumerate(ws.columns, start=1):
+        widths = [len(str(c.value)) if c.value is not None else 0 for c in col]
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(
+            max(min_width, max(widths) + 2), max_width,
+        )
+
+
+def _write_table(ws: Worksheet, headers: List[str], rows: List[List[Any]]) -> None:
+    ws.append(headers)
+    _style_header(ws, 1, len(headers))
+    ws.freeze_panes = 'A2'
+    for row in rows:
+        ws.append(row)
+    _autosize(ws)
+
+
+# ── individual sheet builders ────────────────────────────────────────────
+
+def _build_teachers(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.subjects.models import Teacher
+    school_id = spec.get('school_id') or 1
+    qs = Teacher.objects.filter(school_id=school_id).order_by('last_name', 'first_name')
+    rows = [[
+        t.id, t.first_name, t.last_name or '', t.email or '', t.phone or '',
+        t.max_weekly_hours, t.get_day_off_display() if t.day_off else '',
+    ] for t in qs]
+    ws = wb.create_sheet('מורים')
+    _write_table(ws, [
+        'ID', 'שם פרטי', 'שם משפחה', 'אימייל', 'טלפון', 'מקס שעות שבועי', 'יום חופש',
+    ], rows)
+
+
+def _build_subjects(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.subjects.models import Subject
+    school_id = spec.get('school_id') or 1
+    qs = Subject.objects.filter(school_id=school_id).order_by('name_he')
+    rows = [[s.id, s.name_he, s.name_en, s.color, 'כן' if s.requires_consecutive else ''] for s in qs]
+    ws = wb.create_sheet('מקצועות')
+    _write_table(ws, ['ID', 'שם בעברית', 'שם באנגלית', 'צבע', 'דורש שיעורים צמודים'], rows)
+    # Tint each row's color column with the actual subject color
+    for r_idx, s in enumerate(qs, start=2):
+        try:
+            ws.cell(row=r_idx, column=4).fill = PatternFill('solid', fgColor=s.color.lstrip('#'))
+        except Exception:
+            pass
+
+
+def _build_classes(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.school.models import SchoolClass
+    school_id = spec.get('school_id') or 1
+    qs = SchoolClass.objects.filter(grade__school_id=school_id).select_related('grade')
+    rows = [[
+        c.id, c.grade.name, c.number, c.display_name, c.get_class_type_display(), c.student_count,
+    ] for c in qs]
+    ws = wb.create_sheet('כיתות')
+    _write_table(ws, ['ID', 'שכבה', 'מספר', 'שם תצוגה', 'סוג', 'מספר תלמידים'], rows)
+
+
+def _build_time_slots(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.school.models import TimeSlot
+    school_id = spec.get('school_id') or 1
+    qs = TimeSlot.objects.filter(school_id=school_id).order_by('day', 'period')
+    rows = [[
+        ts.id, ts.day, ts.get_day_display(), ts.period,
+        ts.start_time.strftime('%H:%M'), ts.end_time.strftime('%H:%M'),
+    ] for ts in qs]
+    ws = wb.create_sheet('משבצות זמן')
+    _write_table(ws, ['ID', 'יום (מספר)', 'יום (שם)', 'שיעור', 'התחלה', 'סיום'], rows)
+
+
+def _build_rooms(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.school.models import Room
+    school_id = spec.get('school_id') or 1
+    qs = Room.objects.filter(school_id=school_id)
+    rows = [[r.id, r.name, r.capacity, r.room_type] for r in qs]
+    ws = wb.create_sheet('חדרים')
+    _write_table(ws, ['ID', 'שם', 'קיבולת', 'סוג'], rows)
+
+
+def _build_assignments(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.subjects.models import TeachingAssignment
+    school_id = spec.get('school_id') or 1
+    qs = (
+        TeachingAssignment.objects
+        .filter(school_class__grade__school_id=school_id)
+        .select_related('teacher', 'subject', 'school_class', 'school_class__grade')
+    )
+    rows = [[
+        a.id,
+        f'{a.teacher.first_name} {a.teacher.last_name or ""}'.strip(),
+        a.subject.name_he,
+        a.school_class.display_name,
+        float(a.weekly_hours),
+        float(a.bagrut_bonus_hours),
+        a.bagrut_exam_code or '',
+        a.notes or '',
+    ] for a in qs]
+    ws = wb.create_sheet('שיבוצי הוראה')
+    _write_table(ws, [
+        'ID', 'מורה', 'מקצוע', 'כיתה', 'שעות שבועיות',
+        'גמול בגרות', 'סמל שאלון', 'הערות',
+    ], rows)
+
+
+def _build_constraints(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.scheduling.models import Constraint
+    school_id = spec.get('school_id') or 1
+    qs = Constraint.objects.filter(school_id=school_id).select_related('teacher', 'subject', 'school_class')
+    rows = [[
+        c.id, c.name, c.get_constraint_type_display(), c.get_priority_display(),
+        'כן' if c.is_active else 'לא',
+        str(c.teacher) if c.teacher else '',
+        c.subject.name_he if c.subject else '',
+        c.school_class.display_name if c.school_class else '',
+        str(c.parameters or {}),
+    ] for c in qs]
+    ws = wb.create_sheet('אילוצים')
+    _write_table(ws, [
+        'ID', 'שם', 'סוג', 'עדיפות', 'פעיל', 'מורה', 'מקצוע', 'כיתה', 'פרמטרים',
+    ], rows)
+
+
+# ── timetable views ──────────────────────────────────────────────────────
+
+DAY_NAMES = {1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי'}
+
+
+def _grid_for_entries(ws: Worksheet, title: str, entries, mode: str) -> None:
+    """Render a day×period grid for a single class or teacher.
+
+    `mode='class'` → cell shows subject + teacher.
+    `mode='teacher'` → cell shows subject + class.
+    """
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal='center')
+
+    headers = ['שיעור'] + [DAY_NAMES[d] for d in (1, 2, 3, 4, 5)]
+    for c, h in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=c, value=h)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[3].height = 24
+
+    by_slot = {(e.time_slot.day, e.time_slot.period): e for e in entries}
+    max_period = max((p for _d, p in by_slot.keys()), default=8) if by_slot else 8
+
+    for period in range(1, max_period + 1):
+        row = 3 + period
+        ws.cell(row=row, column=1, value=period).font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = SUBHEADER_FILL
+        ws.cell(row=row, column=1).alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[row].height = 38
+        for day in (1, 2, 3, 4, 5):
+            cell = ws.cell(row=row, column=day + 1)
+            entry = by_slot.get((day, period))
+            if entry:
+                if mode == 'class':
+                    text = f'{entry.subject.name_he}\n{entry.teacher.first_name} {entry.teacher.last_name or ""}'.strip()
+                else:
+                    text = f'{entry.subject.name_he}\n{entry.school_class.display_name}'
+                cell.value = text
+                try:
+                    cell.fill = PatternFill('solid', fgColor=entry.subject.color.lstrip('#'))
+                except Exception:
+                    pass
+            cell.alignment = WRAP
+            cell.font = GRID_FONT
+
+    for c in range(1, 7):
+        ws.column_dimensions[get_column_letter(c)].width = 18 if c > 1 else 8
+
+
+def _build_timetable_by_class(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.scheduling.models import TimetableEntry
+    timetable_id = spec.get('timetable_id')
+    if not timetable_id:
+        return
+    entries = list(
+        TimetableEntry.objects.filter(timetable_id=timetable_id)
+        .select_related('school_class', 'school_class__grade', 'subject', 'teacher', 'time_slot')
+    )
+    by_class: Dict[int, list] = defaultdict(list)
+    class_names: Dict[int, str] = {}
+    for e in entries:
+        by_class[e.school_class_id].append(e)
+        class_names[e.school_class_id] = e.school_class.display_name
+
+    for cid in sorted(by_class.keys(), key=lambda i: class_names[i]):
+        # Excel sheet names: max 31 chars, no special chars
+        safe = class_names[cid][:25] + ' (כיתה)'
+        ws = wb.create_sheet(safe[:31])
+        _grid_for_entries(ws, f'מערכת שעות — כיתה {class_names[cid]}', by_class[cid], mode='class')
+
+
+def _build_timetable_by_teacher(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.scheduling.models import TimetableEntry
+    timetable_id = spec.get('timetable_id')
+    if not timetable_id:
+        return
+    entries = list(
+        TimetableEntry.objects.filter(timetable_id=timetable_id)
+        .select_related('teacher', 'school_class', 'school_class__grade', 'subject', 'time_slot')
+    )
+    by_teacher: Dict[int, list] = defaultdict(list)
+    teacher_names: Dict[int, str] = {}
+    for e in entries:
+        by_teacher[e.teacher_id].append(e)
+        teacher_names[e.teacher_id] = f'{e.teacher.first_name} {e.teacher.last_name or ""}'.strip()
+
+    for tid in sorted(by_teacher.keys(), key=lambda i: teacher_names[i]):
+        safe = teacher_names[tid][:24] + ' (מורה)'
+        ws = wb.create_sheet(safe[:31])
+        _grid_for_entries(ws, f'מערכת שעות — {teacher_names[tid]}', by_teacher[tid], mode='teacher')
+
+
+def _build_timetable_flat(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.scheduling.models import TimetableEntry
+    timetable_id = spec.get('timetable_id')
+    if not timetable_id:
+        return
+    entries = (
+        TimetableEntry.objects.filter(timetable_id=timetable_id)
+        .select_related('teacher', 'school_class', 'school_class__grade', 'subject', 'time_slot', 'room')
+        .order_by('time_slot__day', 'time_slot__period', 'school_class__grade__level', 'school_class__number')
+    )
+    rows = [[
+        e.id,
+        e.time_slot.get_day_display(),
+        e.time_slot.period,
+        e.school_class.display_name,
+        e.subject.name_he,
+        f'{e.teacher.first_name} {e.teacher.last_name or ""}'.strip(),
+        e.room.name if e.room else '',
+    ] for e in entries]
+    ws = wb.create_sheet('כל השיעורים')
+    _write_table(ws, ['ID', 'יום', 'שיעור', 'כיתה', 'מקצוע', 'מורה', 'חדר'], rows)
+
+
+def _build_conflicts(wb: Workbook, spec: Dict[str, Any]) -> None:
+    """Detected conflicts in the selected timetable — same logic as the
+    AI assistant's find_conflicts tool, but emitted as a sheet."""
+    from apps.scheduling.models import TimetableEntry
+    timetable_id = spec.get('timetable_id')
+    if not timetable_id:
+        return
+    entries = list(
+        TimetableEntry.objects.filter(timetable_id=timetable_id)
+        .select_related('teacher', 'school_class', 'school_class__grade', 'subject', 'time_slot', 'room')
+    )
+    teacher_buckets, class_buckets, room_buckets = defaultdict(list), defaultdict(list), defaultdict(list)
+    for e in entries:
+        teacher_buckets[(e.time_slot_id, e.teacher_id)].append(e)
+        class_buckets[(e.time_slot_id, e.school_class_id)].append(e)
+        if e.room_id:
+            room_buckets[(e.time_slot_id, e.room_id)].append(e)
+
+    rows = []
+    for es in teacher_buckets.values():
+        if len(es) > 1:
+            rows.append([
+                'מורה כפול', f'{es[0].teacher.first_name} {es[0].teacher.last_name or ""}'.strip(),
+                str(es[0].time_slot),
+                ', '.join(f'{e.school_class.display_name}/{e.subject.name_he}' for e in es),
+            ])
+    for es in class_buckets.values():
+        if len(es) > 1:
+            rows.append([
+                'כיתה כפולה', es[0].school_class.display_name,
+                str(es[0].time_slot),
+                ', '.join(f'{e.subject.name_he}/{e.teacher.first_name}' for e in es),
+            ])
+    for es in room_buckets.values():
+        if len(es) > 1:
+            rows.append([
+                'חדר כפול', str(es[0].room),
+                str(es[0].time_slot),
+                ', '.join(f'{e.school_class.display_name}/{e.subject.name_he}' for e in es),
+            ])
+    ws = wb.create_sheet('התנגשויות')
+    _write_table(ws, ['סוג התנגשות', 'ישות', 'משבצת', 'פרטים'], rows)
+
+
+# ── audit / users (super-admin only — view layer enforces) ────────────────
+
+def _build_audit_logins(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.users.models import AuditLogin
+    qs = AuditLogin.objects.all().select_related('user')[:1000]
+    rows = [[
+        a.id, a.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        (a.user.email if a.user else '') or a.user_label,
+        a.method, 'הצליח' if a.success else 'נכשל',
+        a.ip_address or '', a.user_agent or '',
+    ] for a in qs]
+    ws = wb.create_sheet('יומן התחברויות')
+    _write_table(ws, ['ID', 'מתי', 'משתמש', 'שיטה', 'סטטוס', 'IP', 'User-Agent'], rows)
+
+
+def _build_audit_activities(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.users.models import AuditActivity
+    qs = AuditActivity.objects.all().select_related('user')[:1000]
+    rows = [[
+        a.id, a.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        (a.user.email if a.user else '') or a.user_label,
+        a.action, str(a.details or {}), a.ip_address or '',
+    ] for a in qs]
+    ws = wb.create_sheet('יומן פעולות')
+    _write_table(ws, ['ID', 'מתי', 'משתמש', 'פעולה', 'פרטים', 'IP'], rows)
+
+
+def _build_users(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from django.contrib.auth.models import User
+    qs = User.objects.all().select_related('profile').order_by('id')
+    rows = [[
+        u.id, u.username, u.email,
+        getattr(getattr(u, 'profile', None), 'full_name', '') or u.get_full_name(),
+        getattr(getattr(u, 'profile', None), 'phone', '') or '',
+        getattr(getattr(u, 'profile', None), 'role', ''),
+        'כן' if u.is_active else 'לא',
+        u.last_login.strftime('%Y-%m-%d %H:%M:%S') if u.last_login else '',
+    ] for u in qs]
+    ws = wb.create_sheet('משתמשים')
+    _write_table(ws, ['ID', 'Username', 'אימייל', 'שם מלא', 'טלפון', 'תפקיד', 'פעיל', 'התחברות אחרונה'], rows)
+
+
+def _build_import_logs(wb: Workbook, spec: Dict[str, Any]) -> None:
+    from apps.import_export.models import ImportLog
+    qs = ImportLog.objects.all().order_by('-uploaded_at')[:200]
+    rows = [[
+        log.id, log.uploaded_at.strftime('%Y-%m-%d %H:%M:%S'),
+        log.file_name or '', log.get_status_display(),
+        log.subjects_imported, log.teachers_imported, log.assignments_imported,
+        '\n'.join(log.errors) if log.errors else '',
+    ] for log in qs]
+    ws = wb.create_sheet('יומן ייבואים')
+    _write_table(ws, [
+        'ID', 'מתי', 'שם קובץ', 'סטטוס',
+        'מקצועות', 'מורים', 'שיבוצים', 'שגיאות',
+    ], rows)
+
+
+# ── registry ──────────────────────────────────────────────────────────────
+SHEET_BUILDERS: Dict[str, Callable[[Workbook, Dict[str, Any]], None]] = {
+    'timetable_by_class': _build_timetable_by_class,
+    'timetable_by_teacher': _build_timetable_by_teacher,
+    'timetable_flat': _build_timetable_flat,
+    'conflicts': _build_conflicts,
+    'teachers': _build_teachers,
+    'subjects': _build_subjects,
+    'classes': _build_classes,
+    'time_slots': _build_time_slots,
+    'rooms': _build_rooms,
+    'assignments': _build_assignments,
+    'constraints': _build_constraints,
+    'import_logs': _build_import_logs,
+    'audit_logins': _build_audit_logins,        # super_admin only
+    'audit_activities': _build_audit_activities,  # super_admin only
+    'users': _build_users,                       # super_admin only
+}
+
+SUPER_ADMIN_ONLY_SHEETS = {'audit_logins', 'audit_activities', 'users'}
+
+
+def build_workbook(spec: Dict[str, Any], is_super_admin: bool = False) -> Workbook:
+    wb = Workbook()
+    # openpyxl creates a default sheet; we'll remove it once we've added at
+    # least one of our own.
+    default = wb.active
+
+    requested = spec.get('sheets') or []
+    skipped: List[str] = []
+    for name in requested:
+        if name not in SHEET_BUILDERS:
+            skipped.append(f'{name}: unknown sheet')
+            continue
+        if name in SUPER_ADMIN_ONLY_SHEETS and not is_super_admin:
+            skipped.append(f'{name}: requires super_admin')
+            continue
+        SHEET_BUILDERS[name](wb, spec)
+
+    # Drop the empty default sheet only if we successfully added others.
+    if len(wb.worksheets) > 1 and default.title == 'Sheet':
+        wb.remove(default)
+    else:
+        # Nothing was built — repurpose the default sheet for a friendly note
+        default.title = 'מידע'
+        default['A1'] = 'לא נבחרו לוחות לייצוא'
+        default['A1'].font = Font(bold=True, size=12)
+        for i, msg in enumerate(skipped, start=3):
+            default.cell(row=i, column=1, value=msg)
+
+    return wb

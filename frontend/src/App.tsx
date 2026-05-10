@@ -16,6 +16,7 @@ import TimetablePage from './pages/Timetable';
 import LoginPage from './pages/Login';
 import AdminUsersPage from './pages/Admin/Users';
 import AdminAuditPage from './pages/Admin/Audit';
+import ManagePage from './pages/Manage';
 import AiAssistant, { AiAssistantProvider } from './components/AiAssistant';
 import { getMe } from './api/client';
 
@@ -504,6 +505,7 @@ function App() {
                 <Route path="/import" element={<ImportPage />} />
                 <Route path="/constraints" element={<ConstraintsPage />} />
                 <Route path="/timetable" element={<TimetablePage />} />
+                <Route path="/manage" element={<ManagePage />} />
                 <Route
                   path="/admin/users"
                   element={isSuperAdmin ? <AdminUsersPage /> : <Navigate to="/" replace />}

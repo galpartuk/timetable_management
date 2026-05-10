@@ -138,3 +138,29 @@ export const uploadDaysOff = (file: File, schoolId: number) => {
 
 export const getImportLogs = (schoolId?: number) =>
   api.get('/import/logs/', { params: schoolId ? { school_id: schoolId } : {} });
+
+// Export
+export interface ExportOptions {
+  sheets: string[];
+  super_admin_only: string[];
+  is_super_admin: boolean;
+}
+
+export const getExportOptions = () => api.get<ExportOptions>('/export/options/');
+
+export const exportExcel = (spec: {
+  sheets: string[];
+  timetable_id?: number;
+  school_id?: number;
+}) =>
+  api.post('/export/excel/', spec, { responseType: 'blob' });
+
+// Manage / delete
+export const deleteTimetable = (id: number) =>
+  api.delete(`/manage/timetable/${id}/`);
+
+export const clearTimetableEntries = (id: number) =>
+  api.post(`/manage/timetable/${id}/clear/`);
+
+export const bulkDelete = (operation: string, schoolId?: number) =>
+  api.post('/manage/bulk-delete/', { operation, school_id: schoolId });
