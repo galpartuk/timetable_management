@@ -97,7 +97,13 @@ class TimetableEntry(models.Model):
     class Meta:
         verbose_name = 'שיעור במערכת'
         verbose_name_plural = 'שיעורים במערכת'
-        unique_together = ['timetable', 'school_class', 'time_slot']
+        # NOT unique on (timetable, class, slot) — a pooled high-school
+        # lesson (e.g., math) puts several parallel teachers in the same
+        # slot for the same class (each teaching a different ability
+        # track). The minimal unique key is (timetable, class, slot,
+        # teacher): the *same teacher* cannot appear twice in one slot,
+        # but multiple teachers can.
+        unique_together = ['timetable', 'school_class', 'time_slot', 'teacher']
 
     def __str__(self):
         return f'{self.school_class} - {self.subject} - {self.time_slot}'

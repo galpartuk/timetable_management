@@ -87,6 +87,20 @@ COURSE_CATALOG_SHEETS = {'השכלה'}  # captured but not bound to classes
 PE_SHEETS = {'חינוך גופני'}
 SKIP_SHEETS: set[str] = set()  # explicit skip list — currently nothing
 
+# Sheets that represent **bagrut electives** — courses students opt into
+# at the high-school level. Their per-class rows can't be scheduled as
+# class-bound lessons (because the audience is a self-selected subset),
+# so we import them as inactive and let the school book them into a
+# designated "bagrut window" manually. Core subjects are scheduled
+# normally.
+ELECTIVE_SHEETS = {
+    'מדעי החברה', 'ביוטכנולוגיה', 'תעשייה וניהול', 'מנהל וכלכלה',
+    'ביולוגיה', 'כימיה', 'פיזיקה', 'מדעי המחשב', 'אדריכלות',
+    'פיקוד ובקרה', 'מחשבת ישראל',
+}
+# Only relevant for high-school grades.
+HIGH_SCHOOL_GRADES = {'י', 'יא', 'יב'}
+
 # Headers we recognize. Listed most-specific first so that "סוג כיתה"
 # doesn't get matched as "כיתה" first.
 HEADER_KEYS: list[tuple[str, list[str]]] = [
@@ -184,6 +198,22 @@ def _parse_single_class(text: str):
     if not m:
         return None
     return m.group(1), int(m.group(2))
+
+
+def _guess_grade(text: str) -> str | None:
+    """Return the grade letter implied by a cell, or None.
+
+    Handles partial / fuzzy entries — e.g., 'מופת- ט6' implies ט,
+    'בחירת ביולוגיה יא' implies יא. We just look for any grade-letter
+    substring and return the longest match (so 'יא' wins over 'י')."""
+    text = _apply_grade_aliases(_normalize(text))
+    if not text:
+        return None
+    matches = []
+    for g in sorted(GRADE_LEVEL.keys(), key=lambda x: -len(x)):
+        if g in text:
+            matches.append(g)
+    return matches[0] if matches else None
 
 
 def _parse_class_list(text: str):
@@ -374,6 +404,10 @@ def _parse_subject_sheet(ws, parsed: ParsedWorkbook):
         classes: list[tuple[str, int]] = []
         track_label = class_type_raw  # default; refined below
         new_pool = False
+        # Some row variants force is_active=False (e.g., bagrut electives
+        # that need manual scheduling). The default below will OR in
+        # פתיחה מותנית marker if relevant.
+        forced_inactive = False
         if class_raw:
             multi = _parse_class_list(class_raw)
             if multi and len(multi) > 1:
@@ -387,11 +421,42 @@ def _parse_subject_sheet(ws, parsed: ParsedWorkbook):
                     last_pool = [single]
                     new_pool = True
                 else:
-                    # Some pools span a *label* rather than parseable classes —
-                    # e.g., "אומץ ומבר" or "מופת- ט6". Just keep the most-recent
-                    # pool and stash this label into notes.
-                    notes = (notes + ' | ' if notes else '') + f'(תווית: {class_raw})'
-                    classes = list(last_pool)
+                    # Grade-only indicator ("יוד" / "יא" / "יב") with no
+                    # class number — typical of bagrut electives where
+                    # students from any class can attend. We attach the
+                    # row to the FIRST class of that grade as a placeholder
+                    # so the teacher's hours are tracked. The school
+                    # adjusts these manually post-solve.
+                    grade_only = _apply_grade_aliases(class_raw).strip()
+                    grade_only = re.sub(r'[\s,\']+$', '', grade_only)
+                    if grade_only in GRADE_LEVEL:
+                        # Bagrut elective for the whole grade — students
+                        # from any class can attend. We import it as
+                        # *inactive* so the solver ignores it (the school
+                        # books these into a dedicated "bagrut window" by
+                        # hand). The teacher's hours still show up via
+                        # `TeachingAssignment.weekly_hours`.
+                        parsed.warnings.append(
+                            f'{ws.title} R{r}: שורת בחירה לשכבה {grade_only} —'
+                            f' מסומנת כלא-פעילה (יש לתזמן ידנית)'
+                        )
+                        classes = [(grade_only, 1)]
+                        last_pool = list(classes)
+                        new_pool = True
+                        forced_inactive = True
+                        track_label = (track_label + ' / בחירה' if track_label else 'בחירה')
+                    elif last_pool and last_pool[0][0] == _guess_grade(class_raw):
+                        # Continuation of a pool whose label is shorthand
+                        # for the same grade (e.g., "מופת- ט6" while in ט).
+                        notes = (notes + ' | ' if notes else '') + f'(תווית: {class_raw})'
+                        classes = list(last_pool)
+                    else:
+                        # Genuinely unparseable, different grade than the
+                        # previous pool — skip and warn.
+                        parsed.warnings.append(
+                            f'{ws.title} R{r}: לא ניתן לפענח שורת כיתה: {class_raw!r}'
+                        )
+                        continue
         else:
             # Continuation row — uses the most-recent pool.
             classes = list(last_pool)
@@ -423,7 +488,32 @@ def _parse_subject_sheet(ws, parsed: ParsedWorkbook):
 
         # "פתיחה מותנית" (conditional opening) marks rows where the lesson
         # may or may not actually happen — flag and import as inactive.
-        is_active = 'פתיחה מותנית' not in notes
+        is_active = ('פתיחה מותנית' not in notes) and not forced_inactive
+        # Bagrut electives in high school can't be scheduled as class-bound
+        # lessons (the audience is self-selected). Mark inactive so the
+        # solver ignores them; the school books them in a bagrut window.
+        if is_active and ws.title in ELECTIVE_SHEETS and classes:
+            grade_letter = classes[0][0]
+            if grade_letter in HIGH_SCHOOL_GRADES:
+                is_active = False
+
+        # group_key links rows that should be scheduled in parallel:
+        #   - a multi-class pool (clearly)
+        #   - a single-class block with multiple ability tracks (multiple
+        #     continuation rows attached to the same parent row — students
+        #     split into level groups during the same time slots)
+        # We assign group_key whenever the row is part of a continuation
+        # chain — i.e., when last_pool_key was set and either this is a
+        # continuation row or there's already more than one row in the
+        # chain. The first row of a chain might end up "soloing" with
+        # an empty group_key, which is fine; if more continuation rows
+        # follow, the parent's group_key is re-used.
+        gk = ''
+        if last_pool_key:
+            # We always set the group_key when last_pool_key exists —
+            # this lets the solver treat single-class ability-track
+            # families (e.g., י7's 5/4-יח"ל English) as parallel tracks.
+            gk = last_pool_key
 
         for tname, gender_tag in teachers_to_record:
             track = track_label
@@ -442,7 +532,7 @@ def _parse_subject_sheet(ws, parsed: ParsedWorkbook):
                 track_label=track,
                 notes=notes,
                 student_count=student_count,
-                group_key=last_pool_key if len(classes) > 1 else '',
+                group_key=gk,
                 is_active=is_active,
             )
             parsed.assignment_rows.append(row_obj)
@@ -569,33 +659,77 @@ def _canonicalize_teacher_name(raw_name: str) -> str:
     return s
 
 
-def _teacher_for(school: School, raw_name: str, cache: dict[str, Teacher]) -> Teacher | None:
+def _teacher_for(
+    school: School,
+    raw_name: str,
+    cache: dict[tuple[str, str], Teacher],
+    *,
+    subject_key: str = '',
+) -> Teacher | None:
+    """Resolve a raw teacher cell to a Teacher record.
+
+    The Excel uses first names only (e.g., "מיטל"), and the same short
+    name often refers to different people in different subject sheets —
+    מיטל-the-Arabic-teacher is not מיטל-the-math-teacher. So we cache
+    and dedupe by (canonical_name, subject_key): if we see מיטל in two
+    different subjects, we create two separate Teacher records (the
+    canonical first_name is the same; we use last_name to record the
+    subject as a disambiguating suffix so the admin UI shows them
+    distinctly).
+
+    Pass ``subject_key=""`` (default) to ignore subject scoping — used
+    when importing the תפקידים sheet where the same teacher legitimately
+    spans multiple sheets.
+    """
     canonical = _canonicalize_teacher_name(raw_name)
     if not canonical:
         return None
-    # Reject names that are just punctuation, single characters, or numeric.
     if len(canonical) < 2 and not canonical.isalpha():
         return None
     if re.fullmatch(r'\d+(?:\.\d+)?', canonical):
         return None
 
-    cached = cache.get(canonical)
+    key = (canonical, subject_key)
+    cached = cache.get(key)
     if cached:
         return cached
-    existing = (
-        Teacher.objects.filter(school=school, first_name=canonical).first()
-        or Teacher.objects.filter(school=school, last_name=canonical).first()
+
+    # First, an exact-name match without subject scoping (lets the role
+    # sheet reuse a teacher that's already been created by a subject sheet).
+    if not subject_key:
+        existing = Teacher.objects.filter(school=school, first_name=canonical).first()
+        if existing:
+            cache[key] = existing
+            return existing
+
+    # With subject scoping, look for a matching (name, subject) pair —
+    # we record the subject as ``last_name`` (slightly abuse, but it
+    # keeps the existing DB schema and is human-readable).
+    if subject_key:
+        existing = Teacher.objects.filter(
+            school=school, first_name=canonical, last_name=subject_key,
+        ).first()
+        if existing:
+            cache[key] = existing
+            return existing
+        # First time we see this (name, subject) — but maybe a Teacher
+        # with empty last_name already exists for the same name. If so,
+        # *adopt* it for the first subject we see (so we don't end up
+        # with duplicate rows in the simple case where only one Meital
+        # exists). Subsequent subjects then create new records.
+        teacher_with_empty = Teacher.objects.filter(
+            school=school, first_name=canonical, last_name='',
+        ).first()
+        if teacher_with_empty:
+            teacher_with_empty.last_name = subject_key
+            teacher_with_empty.save(update_fields=['last_name'])
+            cache[key] = teacher_with_empty
+            return teacher_with_empty
+
+    t = Teacher.objects.create(
+        school=school, first_name=canonical, last_name=subject_key,
     )
-    if not existing:
-        for t in Teacher.objects.filter(school=school):
-            if str(t).strip() == canonical:
-                existing = t
-                break
-    if existing:
-        cache[canonical] = existing
-        return existing
-    t = Teacher.objects.create(school=school, first_name=canonical)
-    cache[canonical] = t
+    cache[key] = t
     return t
 
 
@@ -687,7 +821,11 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
                 )
                 subject_cache[row.subject] = subject
 
-            teacher = _teacher_for(school, row.teacher, teacher_cache)
+            # Scope teacher disambiguation by subject — "מיטל" in the
+            # math sheet vs Arabic sheet refers to different people.
+            teacher = _teacher_for(
+                school, row.teacher, teacher_cache, subject_key=row.subject,
+            )
 
             # Resolve all classes for this row.
             resolved_classes = []
@@ -750,7 +888,9 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
                 continue
             if not row.teacher or len(row.classes) != 1:
                 continue
-            teacher = _teacher_for(school, row.teacher, teacher_cache)
+            teacher = _teacher_for(
+                school, row.teacher, teacher_cache, subject_key=row.subject,
+            )
             if not teacher:
                 continue
             g_letter, num = row.classes[0]
@@ -759,7 +899,10 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
                 cls.homeroom_teacher = teacher
                 cls.save(update_fields=['homeroom_teacher'])
 
-        # Fourth pass: roles.
+        # Fourth pass: roles. The role sheet uses full teacher names
+        # ("רינת שוורץ" etc.) without subject context, so we pass an
+        # empty subject_key — letting the resolver pick the first
+        # existing Teacher with that name (creating one if none).
         for rrow in parsed.role_rows:
             teacher = _teacher_for(school, rrow.teacher, teacher_cache) if rrow.teacher else None
             TeacherRole.objects.update_or_create(
