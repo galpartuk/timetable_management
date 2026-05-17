@@ -952,12 +952,23 @@ function GapAnalysisTab() {
 
 // ── QUALITY DASHBOARD TAB ─────────────────────────────────────────────────
 
+type TeacherSortKey =
+  | 'name' | 'lessons' | 'windows' | 'long_windows' | 'max_single_gap'
+  | 'days_taught' | 'days_with_windows' | 'longest_teaching_day'
+  | 'max_daily_lessons' | 'avg_daily_lessons' | 'late_period_lessons'
+  | 'first_period_count' | 'distinct_subjects' | 'distinct_classes'
+  | 'role_hours';
+
 function QualityTab() {
   const [timetables, setTimetables] = useState<any[]>([]);
   const [timetableId, setTimetableId] = useState<number | ''>('');
   const [quality, setQuality] = useState<TimetableQuality | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<TeacherSortKey>('windows');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [minWindowsFilter, setMinWindowsFilter] = useState<number>(0);
 
   useEffect(() => {
     getTimetables().then((r) => {
@@ -977,6 +988,64 @@ function QualityTab() {
       .finally(() => setLoading(false));
   }, [timetableId]);
 
+  const sortedTeachers = useMemo(() => {
+    if (!quality) return [];
+    let list = quality.teachers;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((t) => t.name.toLowerCase().includes(q));
+    }
+    if (minWindowsFilter > 0) {
+      list = list.filter((t) => t.windows >= minWindowsFilter);
+    }
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...list].sort((a: any, b: any) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (typeof av === 'string') return dir * av.localeCompare(bv, 'he');
+      return dir * ((av ?? 0) - (bv ?? 0));
+    });
+  }, [quality, search, sortKey, sortDir, minWindowsFilter]);
+
+  const onSort = (key: TeacherSortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'name' ? 'asc' : 'desc');
+    }
+  };
+
+  const exportCsv = () => {
+    if (!quality) return;
+    const headers = [
+      'שם המורה', 'שיעורים', 'חלונות', 'חלונות ארוכים (4+)',
+      'מירב פער יחיד', 'ימי הוראה', 'ימים עם חלונות',
+      'יום הוראה ארוך ביותר', 'שיעורים יומיים מקסימום', 'שיעורים יומיים ממוצע',
+      'שיעורים אחרי 8', 'ימים מתחילים ב-1',
+      'מקצועות שונים', 'כיתות שונות', 'שעות תפקיד', 'יום חופש',
+    ];
+    const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+    const rows = sortedTeachers.map((t) => [
+      t.name, t.lessons, t.windows, t.long_windows,
+      t.max_single_gap, t.days_taught, t.days_with_windows,
+      t.longest_teaching_day, t.max_daily_lessons, t.avg_daily_lessons,
+      t.late_period_lessons, t.first_period_count,
+      t.distinct_subjects, t.distinct_classes, t.role_hours,
+      t.day_off ? dayNames[t.day_off] : '',
+    ]);
+    const csv = '﻿' + [headers, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `teacher_quality_${quality.name.replace(/\s+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (loading && !quality) {
     return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
   }
@@ -985,20 +1054,26 @@ function QualityTab() {
     <Stack spacing={2.5}>
       <Card>
         <CardContent>
-          <TextField
-            select size="small" fullWidth
-            label="מערכת לבדיקה"
-            value={timetableId}
-            onChange={(e) => setTimetableId(Number(e.target.value))}
-            sx={{ maxWidth: 360 }}
-          >
-            {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
-            {timetables.map((tt: any) => (
-              <MenuItem key={tt.id} value={tt.id}>
-                {tt.name} — {tt.academic_year} ({tt.status})
-              </MenuItem>
-            ))}
-          </TextField>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+            <TextField
+              select size="small"
+              label="מערכת לבדיקה"
+              value={timetableId}
+              onChange={(e) => setTimetableId(Number(e.target.value))}
+              sx={{ minWidth: 320 }}
+            >
+              {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
+              {timetables.map((tt: any) => (
+                <MenuItem key={tt.id} value={tt.id}>
+                  {tt.name} — {tt.academic_year} ({tt.status})
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
+                    disabled={!quality} onClick={exportCsv}>
+              ייצא טבלה ל-CSV
+            </Button>
+          </Stack>
         </CardContent>
       </Card>
 
@@ -1007,11 +1082,7 @@ function QualityTab() {
       {quality && (
         <>
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-            <QualityMetric
-              label="סך השיעורים"
-              value={quality.totals.entries}
-              tone="primary"
-            />
+            <QualityMetric label="סך השיעורים" value={quality.totals.entries} tone="primary" />
             <QualityMetric
               label="חלונות מורים (סך)"
               value={quality.totals.total_teacher_windows}
@@ -1022,9 +1093,18 @@ function QualityTab() {
               }
             />
             <QualityMetric
+              label={`חלונות ארוכים (${quality.long_window_threshold}+ שעות)`}
+              value={quality.totals.total_long_windows}
+              hint={`${quality.totals.teachers_with_long_windows} מורים מושפעים`}
+              tone={
+                quality.totals.total_long_windows === 0 ? 'good'
+                : quality.totals.total_long_windows < 5 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
               label="חלונות כיתות (סך)"
               value={quality.totals.total_class_windows}
-              hint={`${quality.totals.classes_with_windows} כיתות מושפעות`}
+              hint={`${quality.totals.classes_with_windows} כיתות`}
               tone={
                 quality.totals.total_class_windows < 10 ? 'good'
                 : quality.totals.total_class_windows < 50 ? 'warn' : 'bad'
@@ -1033,7 +1113,7 @@ function QualityTab() {
             <QualityMetric
               label="מורים עם חלונות"
               value={quality.totals.teachers_with_windows}
-              hint={`מתוך ${quality.teachers.length} מורים`}
+              hint={`מתוך ${quality.teachers.length}`}
             />
             <QualityMetric
               label="שיעורים אחרי 8"
@@ -1044,48 +1124,71 @@ function QualityTab() {
 
           <Card>
             <CardContent>
-              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1.5 }}>
-                15 המורים עם הכי הרבה חלונות
-              </Typography>
-              <Box sx={{ overflow: 'auto' }}>
-                <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
-                  <Box component="thead">
-                    <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.75, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700, fontSize: 11, color: 'grey.600', textTransform: 'uppercase' } }}>
-                      <Box component="th">מורה</Box>
-                      <Box component="th">שיעורים</Box>
-                      <Box component="th">חלונות</Box>
-                      <Box component="th">ימי הוראה</Box>
-                      <Box component="th">חלונות לפי יום</Box>
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}
+                     sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between', mb: 2 }}>
+                <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
+                  טבלת מורים — {sortedTeachers.length} מתוך {quality.teachers.length}
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    size="small" placeholder="חיפוש מורה…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    sx={{ width: 200 }}
+                  />
+                  <TextField
+                    select size="small" value={minWindowsFilter}
+                    onChange={(e) => setMinWindowsFilter(Number(e.target.value))}
+                    sx={{ width: 160 }}
+                  >
+                    <MenuItem value={0}>כל המורים</MenuItem>
+                    <MenuItem value={1}>עם 1+ חלונות</MenuItem>
+                    <MenuItem value={3}>עם 3+ חלונות</MenuItem>
+                    <MenuItem value={5}>עם 5+ חלונות</MenuItem>
+                  </TextField>
+                </Stack>
+              </Stack>
+
+              <Box sx={{ overflow: 'auto', maxHeight: 700 }}>
+                <Box component="table" sx={{
+                  width: '100%', fontSize: 12, borderCollapse: 'separate', borderSpacing: 0,
+                }}>
+                  <Box component="thead" sx={{ position: 'sticky', top: 0, zIndex: 2, background: '#fff' }}>
+                    <Box component="tr" sx={{
+                      '& th': {
+                        textAlign: 'right', py: 1, px: 1,
+                        borderBottom: '2px solid', borderColor: 'grey.300',
+                        fontWeight: 700, fontSize: 10, color: 'grey.700',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                        whiteSpace: 'nowrap', cursor: 'pointer',
+                        userSelect: 'none', background: '#fff',
+                      },
+                    }}>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="name" onSort={onSort}>מורה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>שיעורים</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="windows" onSort={onSort}>חלונות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="long_windows" onSort={onSort}>חלונות ארוכים</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_single_gap" onSort={onSort}>פער מקס׳</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="days_taught" onSort={onSort}>ימי הוראה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="longest_teaching_day" onSort={onSort}>יום ארוך</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_daily_lessons" onSort={onSort}>מקס׳ ליום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="avg_daily_lessons" onSort={onSort}>ממוצע ליום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="late_period_lessons" onSort={onSort}>אחרי 8</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="first_period_count" onSort={onSort}>פותח יום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_subjects" onSort={onSort}>מקצועות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_classes" onSort={onSort}>כיתות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>שעות תפקיד</SortableTh>
+                      <Box component="th">חופש</Box>
                     </Box>
                   </Box>
                   <Box component="tbody">
-                    {quality.teachers
-                      .filter((t) => t.windows > 0)
-                      .slice(0, 15)
-                      .map((t) => (
-                        <Box key={t.id} component="tr" sx={{ '& td': { py: 0.75, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
-                          <Box component="td" sx={{ fontWeight: 600 }}>{t.name}</Box>
-                          <Box component="td">{t.lessons}</Box>
-                          <Box component="td">
-                            <Chip size="small" label={t.windows}
-                                  sx={{ height: 18, fontSize: 10,
-                                    background: t.windows >= 5 ? 'rgba(244,63,94,0.10)' : 'rgba(245,158,11,0.10)',
-                                    color: t.windows >= 5 ? 'error.dark' : '#b45309' }} />
-                          </Box>
-                          <Box component="td">{t.days_taught}</Box>
-                          <Box component="td">
-                            {Object.entries(t.windows_by_day).map(([day, count]) => (
-                              <Chip key={day} size="small"
-                                    label={`${['', 'א', 'ב', 'ג', 'ד', 'ה'][Number(day)]}:${count}`}
-                                    sx={{ height: 16, fontSize: 9, mr: 0.5 }} />
-                            ))}
-                          </Box>
-                        </Box>
-                      ))}
-                    {quality.teachers.filter((t) => t.windows > 0).length === 0 && (
+                    {sortedTeachers.map((t) => (
+                      <TeacherRow key={t.id} t={t} />
+                    ))}
+                    {sortedTeachers.length === 0 && (
                       <Box component="tr">
-                        <Box component="td" colSpan={5} sx={{ py: 3, textAlign: 'center', color: 'grey.500' }}>
-                          ✓ אין חלונות אצל אף מורה — מערכת מצוינת!
+                        <Box component="td" colSpan={15} sx={{ py: 4, textAlign: 'center', color: 'grey.500' }}>
+                          {search ? 'אין תוצאות חיפוש' : '✓ אין מורים שעוברים את הסינון'}
                         </Box>
                       </Box>
                     )}
@@ -1097,9 +1200,7 @@ function QualityTab() {
 
           <Card>
             <CardContent>
-              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>
-                כיתות עם חלונות (פסיכולוגית מקובלים יותר מאשר אצל מורים)
-              </Typography>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>כיתות עם חלונות</Typography>
               <Box sx={{ overflow: 'auto' }}>
                 <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
                   <Box component="thead">
@@ -1136,6 +1237,81 @@ function QualityTab() {
         </>
       )}
     </Stack>
+  );
+}
+
+function SortableTh({
+  k, sortKey, sortDir, onSort, children,
+}: {
+  k: TeacherSortKey;
+  sortKey: TeacherSortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (k: TeacherSortKey) => void;
+  children: React.ReactNode;
+}) {
+  const isActive = sortKey === k;
+  const arrow = isActive ? (sortDir === 'asc' ? '↑' : '↓') : '';
+  return (
+    <Box
+      component="th"
+      onClick={() => onSort(k)}
+      sx={{
+        color: isActive ? 'primary.dark' : 'grey.700',
+        '&:hover': { color: 'primary.dark', background: 'grey.50' },
+      }}
+    >
+      {children} {arrow}
+    </Box>
+  );
+}
+
+function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) {
+  const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+  // Color the windows cell by severity.
+  const winColor = t.windows === 0 ? 'success.dark'
+    : t.windows >= 5 ? 'error.dark'
+    : t.windows >= 3 ? '#b45309' : '#854d0e';
+  const winBg = t.windows === 0 ? 'rgba(16,185,129,0.10)'
+    : t.windows >= 5 ? 'rgba(244,63,94,0.10)'
+    : t.windows >= 3 ? 'rgba(245,158,11,0.10)' : 'rgba(250,204,21,0.10)';
+
+  const longWinColor = t.long_windows === 0 ? 'success.dark' : 'error.dark';
+  const longWinBg = t.long_windows === 0 ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.10)';
+
+  return (
+    <Box component="tr" sx={{
+      '& td': {
+        py: 0.75, px: 1, borderBottom: '1px solid', borderColor: 'grey.100',
+        whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+      },
+      '&:hover': { background: 'grey.50' },
+    }}>
+      <Box component="td" sx={{ fontWeight: 600, position: 'sticky', insetInlineStart: 0, background: 'inherit' }}>
+        {t.name}
+      </Box>
+      <Box component="td">{t.lessons}</Box>
+      <Box component="td">
+        <Chip size="small" label={t.windows}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: winBg, color: winColor }} />
+      </Box>
+      <Box component="td">
+        <Chip size="small" label={t.long_windows}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: longWinBg, color: longWinColor }} />
+      </Box>
+      <Box component="td">{t.max_single_gap || '—'}</Box>
+      <Box component="td">{t.days_taught}</Box>
+      <Box component="td">{t.longest_teaching_day}</Box>
+      <Box component="td">{t.max_daily_lessons}</Box>
+      <Box component="td">{t.avg_daily_lessons.toFixed(1)}</Box>
+      <Box component="td">{t.late_period_lessons || '—'}</Box>
+      <Box component="td">{t.first_period_count}</Box>
+      <Box component="td">{t.distinct_subjects}</Box>
+      <Box component="td">{t.distinct_classes}</Box>
+      <Box component="td">{t.role_hours || '—'}</Box>
+      <Box component="td">{t.day_off ? dayNames[t.day_off] : '—'}</Box>
+    </Box>
   );
 }
 

@@ -117,31 +117,58 @@ export const getTimetableByClass = (timetableId: number, classId: number) =>
 export const getTimetableByTeacher = (timetableId: number, teacherId: number) =>
   api.get(`/timetables/${timetableId}/by-teacher/${teacherId}/`);
 
+export interface TeacherQualityRow {
+  id: number;
+  name: string;
+  first_name: string;
+  last_name: string;
+  lessons: number;
+  windows: number;
+  long_windows: number;
+  max_single_gap: number;
+  days_taught: number;
+  days_with_windows: number;
+  days_with_long_gap: number;
+  longest_teaching_day: number;
+  avg_daily_lessons: number;
+  max_daily_lessons: number;
+  first_period_count: number;
+  late_period_lessons: number;
+  distinct_subjects: number;
+  distinct_classes: number;
+  role_hours: number;
+  has_day_off: boolean;
+  day_off: number | null;
+  windows_by_day: Record<string, number>;
+  day_details: Record<string, {
+    lessons: number;
+    first: number;
+    last: number;
+    span: number;
+    windows: number;
+    max_gap: number;
+    long_window_count: number;
+  }>;
+  subjects: string[];
+}
+
 export interface TimetableQuality {
   timetable_id: number;
   name: string;
   status: string;
+  long_window_threshold: number;
   totals: {
     entries: number;
     total_teacher_windows: number;
+    total_long_windows: number;
     total_class_windows: number;
     teachers_with_windows: number;
+    teachers_with_long_windows: number;
     classes_with_windows: number;
     avg_teacher_windows: number;
     late_period_lessons: number;
   };
-  teachers: Array<{
-    id: number;
-    name: string;
-    first_name: string;
-    last_name: string;
-    lessons: number;
-    windows: number;
-    windows_by_day: Record<string, number>;
-    days_taught: number;
-    has_day_off: boolean;
-    day_off: number | null;
-  }>;
+  teachers: TeacherQualityRow[];
   classes: Array<{
     id: number;
     name: string;
