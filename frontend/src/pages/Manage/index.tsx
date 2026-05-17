@@ -1,21 +1,26 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Alert, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress,
   Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Divider, FormControlLabel, MenuItem, Stack, TextField, Typography,
+  Divider, FormControlLabel, LinearProgress, MenuItem, Stack, TextField,
+  Typography,
 } from '@mui/material';
 import {
+  CloudUpload as UploadIcon,
   Download as DownloadIcon,
   Warning as WarningIcon,
   Delete as DeleteIcon,
   CleaningServices as ClearIcon,
   Block as BlockIcon,
   AdminPanelSettings as ShieldIcon,
+  CheckCircle as CheckIcon,
+  Assessment as ReportIcon,
 } from '@mui/icons-material';
 import {
   bulkDelete, clearTimetableEntries, deleteTimetable, exportExcel,
-  getExportOptions, getTimetables,
+  getExportOptions, getTimetables, uploadExcel, getGapAnalysis,
+  type ImportResponse, type GapAnalysis,
 } from '../../api/client';
 
 // ── catalog of export sheets, with friendly Hebrew labels and a hint of
@@ -47,27 +52,32 @@ const GROUP_TITLES: Record<SheetMeta['group'], string> = {
   admin: 'ניהול ובקרה',
 };
 
-type TabValue = 'export' | 'manage';
+type TabValue = 'import' | 'export' | 'gaps' | 'manage';
 
 export default function ManagePage() {
   const { t } = useTranslation();
   void t;
-  const [tab, setTab] = useState<TabValue>('export');
+  const [tab, setTab] = useState<TabValue>('import');
 
   return (
     <Box>
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h2" sx={{ mb: 0.5 }}>ייצוא וניהול נתונים</Typography>
+        <Typography variant="h2" sx={{ mb: 0.5 }}>ייבוא, ייצוא וניהול נתונים</Typography>
         <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
-          ייצא את נתוני המערכת לקובץ אקסל, או נקה נתונים. פעולות מחיקה הן בלתי-הפיכות.
+          ייבא את הערכות שעות ההוראה מקובץ אקסל, צפה במצב הנתונים, ייצא נתונים, או נקה.
+          פעולות מחיקה הן בלתי-הפיכות.
         </Typography>
       </Box>
 
       <Box sx={{ display: 'inline-flex', gap: 0.5, padding: 0.5, background: 'grey.100', borderRadius: 3, mb: 3 }}>
+        <PillTab label="ייבוא Excel" active={tab === 'import'} onClick={() => setTab('import')} />
+        <PillTab label="פערי נתונים" active={tab === 'gaps'} onClick={() => setTab('gaps')} />
         <PillTab label="ייצוא" active={tab === 'export'} onClick={() => setTab('export')} />
         <PillTab label="ניהול נתונים" active={tab === 'manage'} onClick={() => setTab('manage')} danger />
       </Box>
 
+      {tab === 'import' && <ImportTab />}
+      {tab === 'gaps' && <GapAnalysisTab />}
       {tab === 'export' && <ExportTab />}
       {tab === 'manage' && <ManageTab />}
     </Box>
@@ -540,5 +550,433 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
     >
       {op.buttonLabel}
     </Button>
+  );
+}
+
+// ── IMPORT TAB ────────────────────────────────────────────────────────────
+
+function ImportTab() {
+  const [file, setFile] = useState<File | null>(null);
+  const [wipeExisting, setWipeExisting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [preview, setPreview] = useState<ImportResponse | null>(null);
+  const [commitResult, setCommitResult] = useState<ImportResponse | null>(null);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setFile(null);
+    setPreview(null);
+    setCommitResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      setFile(f);
+      setPreview(null);
+      setCommitResult(null);
+      setError('');
+    }
+  };
+
+  const doDryRun = async () => {
+    if (!file) return;
+    setPreviewing(true);
+    setError('');
+    setCommitResult(null);
+    try {
+      const res = await uploadExcel(file, 1, { dryRun: true, wipeExisting });
+      setPreview(res.data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'תצוגה מקדימה נכשלה');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const doCommit = async () => {
+    if (!file) return;
+    setCommitting(true);
+    setError('');
+    try {
+      const res = await uploadExcel(file, 1, { dryRun: false, wipeExisting });
+      setCommitResult(res.data);
+      setPreview(null);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'הייבוא נכשל');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const p = preview?.preview;
+
+  return (
+    <Stack spacing={3}>
+      <Alert severity="info">
+        העלאת קובץ Excel בפורמט "הערכות לשנת הלימודים".
+        השלב הראשון הוא <strong>תצוגה מקדימה</strong> ללא שינוי במסד הנתונים —
+        רק לאחר אישור תועלה הגרסה לבסיס הנתונים.
+      </Alert>
+
+      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+
+      <Card>
+        <CardContent>
+          <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>1. בחר קובץ</Typography>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<UploadIcon />}
+              disabled={previewing || committing}
+            >
+              בחר קובץ .xlsx
+              <input
+                hidden
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx"
+                onChange={onPickFile}
+              />
+            </Button>
+            {file && (
+              <>
+                <Typography sx={{ fontSize: 14 }}>{file.name}</Typography>
+                <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
+                  ({(file.size / 1024).toFixed(0)} KB)
+                </Typography>
+                <Button size="small" onClick={reset} disabled={previewing || committing}>
+                  נקה
+                </Button>
+              </>
+            )}
+          </Stack>
+
+          <FormControlLabel
+            sx={{ mt: 2, display: 'block' }}
+            control={
+              <Checkbox
+                size="small"
+                checked={wipeExisting}
+                onChange={(e) => setWipeExisting(e.target.checked)}
+                disabled={previewing || committing}
+              />
+            }
+            label={
+              <Box>
+                <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
+                  מחק נתונים קיימים לפני הייבוא
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
+                  ימחק את כל המורים, המקצועות, שיבוצי ההוראה והתפקידים של בית הספר
+                  לפני ייבוא ה-Excel. הכיתות והגדרות נוספות נשארות.
+                </Typography>
+              </Box>
+            }
+          />
+
+          <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
+            <Button
+              variant="outlined"
+              startIcon={previewing ? <CircularProgress size={16} /> : <ReportIcon />}
+              onClick={doDryRun}
+              disabled={!file || previewing || committing}
+            >
+              תצוגה מקדימה
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {p && (
+        <Card sx={{ borderColor: 'primary.light' }}>
+          <CardContent>
+            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
+              2. סיכום תצוגה מקדימה
+            </Typography>
+            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 2 }}>
+              <Stat label="גיליונות" value={p.sheets_seen.length} />
+              <Stat label="שורות שיבוצים" value={p.assignment_rows_total} />
+              <Stat label="שורות תפקידים" value={p.role_rows_total} />
+              <Stat label="מקצועות" value={p.subjects_distinct} />
+              <Stat label="מורים (ייחודיים)" value={p.teachers_distinct} />
+              <Stat label="שורות עם מורה" value={p.rows_with_teacher} />
+              <Stat label="שורות בקבוצות (pool)" value={p.pool_rows} />
+              <Stat label="שורות פתיחה מותנית" value={p.inactive_rows} />
+            </Stack>
+
+            {Object.keys(p.class_rows_per_grade || {}).length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700' }}>
+                  שורות לפי שכבה
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                  {Object.entries(p.class_rows_per_grade).map(([g, n]) => (
+                    <Chip key={g} size="small" label={`${g}: ${n}`} />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {p.warnings.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'warning.dark' }}>
+                  אזהרות ({p.warnings.length})
+                </Typography>
+                <Box sx={{ maxHeight: 160, overflow: 'auto', mt: 0.5, fontSize: 12 }}>
+                  {p.warnings.slice(0, 50).map((w, i) => (
+                    <Typography key={i} sx={{ fontSize: 12, color: 'grey.700' }}>
+                      • {w}
+                    </Typography>
+                  ))}
+                  {p.warnings.length > 50 && (
+                    <Typography sx={{ fontSize: 11, color: 'grey.500' }}>
+                      … +{p.warnings.length - 50} אזהרות נוספות
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {p.errors.length > 0 && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>שגיאות:</Typography>
+                {p.errors.slice(0, 20).map((e, i) => (
+                  <Typography key={i} sx={{ fontSize: 12 }}>• {e}</Typography>
+                ))}
+              </Alert>
+            )}
+
+            <Divider sx={{ my: 2 }} />
+            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
+              3. אישור ייבוא לבסיס הנתונים
+            </Typography>
+            <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>
+              לאחר אישור, הנתונים ייכתבו לבסיס הנתונים. הפעולה אינה הפיכה
+              {wipeExisting && (
+                <strong> ותמחק את כל הנתונים הקיימים לפני ההכנסה</strong>
+              )}.
+            </Typography>
+            <Button
+              variant="contained"
+              color={wipeExisting ? 'error' : 'primary'}
+              size="large"
+              startIcon={committing ? <CircularProgress size={16} color="inherit" /> : <CheckIcon />}
+              onClick={doCommit}
+              disabled={committing}
+            >
+              {committing ? 'מייבא…' : 'אשר ויבא לבסיס נתונים'}
+            </Button>
+            {committing && <LinearProgress sx={{ mt: 1.5 }} />}
+          </CardContent>
+        </Card>
+      )}
+
+      {commitResult && (
+        <Alert severity="success">
+          <Typography sx={{ fontSize: 14, fontWeight: 700 }}>
+            ✓ הייבוא הושלם בהצלחה
+          </Typography>
+          <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: 'wrap', fontSize: 13 }}>
+            <Box>מקצועות שנוספו: <strong>{commitResult.subjects_imported}</strong></Box>
+            <Box>מורים שנוספו: <strong>{commitResult.teachers_imported}</strong></Box>
+            <Box>כיתות שנוספו: <strong>{commitResult.classes_imported}</strong></Box>
+            <Box>שיבוצים: <strong>{commitResult.assignments_imported}</strong></Box>
+            <Box>תפקידים: <strong>{commitResult.roles_imported}</strong></Box>
+          </Stack>
+        </Alert>
+      )}
+    </Stack>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <Box sx={{
+      px: 2, py: 1.25,
+      background: 'grey.50',
+      borderRadius: 2,
+      minWidth: 120,
+    }}>
+      <Typography sx={{ fontSize: 11, color: 'grey.600' }}>{label}</Typography>
+      <Typography sx={{ fontSize: 22, fontWeight: 700 }}>{value}</Typography>
+    </Box>
+  );
+}
+
+// ── GAP ANALYSIS TAB ───────────────────────────────────────────────────────
+
+function GapAnalysisTab() {
+  const [data, setData] = useState<GapAnalysis | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await getGapAnalysis(1);
+      setData(res.data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'טעינת הנתונים נכשלה');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (loading && !data) {
+    return (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return <Alert severity="error">{error}</Alert>;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const overCap = data.teacher_loads.filter((t) => t.over_cap);
+  const underTaught = data.teacher_loads.filter((t) => t.under_must_teach);
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography sx={{ fontSize: 16, fontWeight: 700 }}>סיכום מצב הנתונים</Typography>
+        <Button size="small" onClick={load} disabled={loading}>רענן</Button>
+      </Stack>
+
+      <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+        <GapCard
+          title="כיתות ללא מחנכ/ת"
+          count={data.classes_missing_homeroom_count}
+          severity={data.classes_missing_homeroom_count > 0 ? 'warning' : 'ok'}
+        >
+          {data.classes_missing_homeroom.slice(0, 30).map((c) => (
+            <Chip key={c.id} size="small" label={`${c.grade__name}${c.number}`} sx={{ mr: 0.5, mb: 0.5 }} />
+          ))}
+        </GapCard>
+
+        <GapCard
+          title="שיבוצים ללא מורה"
+          count={data.assignments_without_teacher_count}
+          severity={data.assignments_without_teacher_count > 0 ? 'warning' : 'ok'}
+        >
+          <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
+            {data.assignments_without_teacher_count} שיעורים ללא מורה מוקצה.
+            הסולבר ידלג עליהם.
+          </Typography>
+        </GapCard>
+
+        <GapCard
+          title="מורים מעל מכסה"
+          count={overCap.length}
+          severity={overCap.length > 0 ? 'error' : 'ok'}
+        >
+          {overCap.slice(0, 20).map((t) => (
+            <Typography key={t.id} sx={{ fontSize: 12 }}>
+              {t.name}: {t.assigned_hours}h / מקס {t.cap}h
+            </Typography>
+          ))}
+        </GapCard>
+
+        <GapCard
+          title="מורים פחות מחובת ההוראה"
+          count={underTaught.length}
+          severity={underTaught.length > 0 ? 'warning' : 'ok'}
+        >
+          {underTaught.slice(0, 20).map((t) => (
+            <Typography key={t.id} sx={{ fontSize: 12 }}>
+              {t.name}: {t.assigned_hours}h / חובה {t.must_teach}h
+            </Typography>
+          ))}
+        </GapCard>
+      </Stack>
+
+      <Card>
+        <CardContent>
+          <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>
+            עומס מורים (Top 30)
+          </Typography>
+          <Box sx={{ maxHeight: 480, overflow: 'auto' }}>
+            <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
+              <Box component="thead">
+                <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.5, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700 } }}>
+                  <Box component="th">מורה</Box>
+                  <Box component="th">שעות הוראה</Box>
+                  <Box component="th">שעות תפקיד</Box>
+                  <Box component="th">חובת הוראה</Box>
+                  <Box component="th">מכסה</Box>
+                  <Box component="th">סטטוס</Box>
+                </Box>
+              </Box>
+              <Box component="tbody">
+                {data.teacher_loads.slice(0, 30).map((t) => (
+                  <Box key={t.id} component="tr" sx={{ '& td': { py: 0.5, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
+                    <Box component="td">{t.name}</Box>
+                    <Box component="td">{t.assigned_hours}</Box>
+                    <Box component="td">{t.role_hours}</Box>
+                    <Box component="td">{t.must_teach}</Box>
+                    <Box component="td">{t.cap}</Box>
+                    <Box component="td">
+                      {t.over_cap && <Chip size="small" color="error" label="מעל מכסה" />}
+                      {t.under_must_teach && <Chip size="small" color="warning" label="פחות מחובה" />}
+                      {!t.over_cap && !t.under_must_teach && <Chip size="small" color="success" label="תקין" />}
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    </Stack>
+  );
+}
+
+function GapCard({ title, count, severity, children }: {
+  title: string;
+  count: number;
+  severity: 'ok' | 'warning' | 'error';
+  children: React.ReactNode;
+}) {
+  const palette = {
+    ok: { color: 'success.dark', bg: 'success.light' },
+    warning: { color: 'warning.dark', bg: 'warning.light' },
+    error: { color: 'error.dark', bg: 'error.light' },
+  }[severity];
+
+  return (
+    <Card sx={{ flex: '1 1 240px', minWidth: 240 }}>
+      <CardContent>
+        <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{title}</Typography>
+          <Box sx={{
+            px: 1.5, py: 0.25,
+            borderRadius: 99,
+            background: palette.bg,
+            color: palette.color,
+            fontSize: 12,
+            fontWeight: 700,
+          }}>
+            {count}
+          </Box>
+        </Stack>
+        {children}
+      </CardContent>
+    </Card>
   );
 }

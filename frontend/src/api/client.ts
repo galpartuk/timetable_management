@@ -118,11 +118,47 @@ export const getTimetableByTeacher = (timetableId: number, teacherId: number) =>
   api.get(`/timetables/${timetableId}/by-teacher/${teacherId}/`);
 
 // Import
-export const uploadExcel = (file: File, schoolId: number) => {
+export interface ImportPreview {
+  sheets_seen: string[];
+  assignment_rows_total: number;
+  role_rows_total: number;
+  subjects_distinct: number;
+  teachers_distinct: number;
+  rows_with_teacher: number;
+  rows_with_hours: number;
+  pool_rows: number;
+  inactive_rows: number;
+  class_rows_per_grade: Record<string, number>;
+  top_subjects: [string, number][];
+  top_teachers: [string, number][];
+  warnings: string[];
+  errors: string[];
+}
+
+export interface ImportResponse {
+  message?: string;
+  log_id?: number;
+  dry_run?: boolean;
+  preview?: ImportPreview;
+  subjects_imported?: number;
+  teachers_imported?: number;
+  classes_imported?: number;
+  assignments_imported?: number;
+  roles_imported?: number;
+  warnings?: string[];
+  errors?: string[];
+}
+
+export const uploadExcel = (file: File, schoolId: number, opts: {
+  dryRun?: boolean;
+  wipeExisting?: boolean;
+} = {}) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('school_id', schoolId.toString());
-  return api.post('/import/upload/', formData, {
+  if (opts.dryRun) formData.append('dry_run', 'true');
+  if (opts.wipeExisting) formData.append('wipe_existing', 'true');
+  return api.post<ImportResponse>('/import/upload/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };
@@ -138,6 +174,36 @@ export const uploadDaysOff = (file: File, schoolId: number) => {
 
 export const getImportLogs = (schoolId?: number) =>
   api.get('/import/logs/', { params: schoolId ? { school_id: schoolId } : {} });
+
+export interface GapAnalysis {
+  school_id: number;
+  classes_missing_homeroom_count: number;
+  classes_missing_homeroom: Array<{ id: number; grade__name: string; number: number }>;
+  assignments_without_teacher_count: number;
+  assignments_without_teacher: Array<{
+    id: number;
+    subject__name_he: string;
+    school_class__grade__name: string;
+    school_class__number: number;
+    weekly_hours: string | number;
+    track_label: string;
+  }>;
+  assignments_without_hours_count: number;
+  assignments_without_hours: Array<any>;
+  teacher_loads: Array<{
+    id: number;
+    name: string;
+    assigned_hours: number;
+    role_hours: number;
+    must_teach: number;
+    cap: number;
+    over_cap: boolean;
+    under_must_teach: boolean;
+  }>;
+}
+
+export const getGapAnalysis = (schoolId: number) =>
+  api.get<GapAnalysis>('/import/gap-analysis/', { params: { school_id: schoolId } });
 
 // Export
 export interface ExportOptions {

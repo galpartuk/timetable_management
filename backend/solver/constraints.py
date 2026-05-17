@@ -37,11 +37,22 @@ class Lesson:
 class SolverContext:
     """Shared state for constraint handlers — owns the model, lessons, and lazy bool indicators."""
 
-    def __init__(self, model: cp_model.CpModel, time_slots, lessons: list[Lesson]):
+    def __init__(
+        self,
+        model: cp_model.CpModel,
+        time_slots,
+        lessons: list[Lesson],
+        pool_classes: dict[int, list[int]] | None = None,
+    ):
         self.model = model
         self.time_slots = time_slots
         self.num_slots = len(time_slots)
         self.lessons = lessons
+        # Map: assignment_id → list of class_ids this lesson is delivered to.
+        # For non-pooled assignments this is a singleton list. We use it to
+        # ensure the no-class-conflict constraint covers every class in the
+        # pool (not just the primary).
+        self.pool_classes = pool_classes or {}
 
         self.ts_index = {ts.id: i for i, ts in enumerate(time_slots)}
         self.slots_by_day: dict[int, list[int]] = {}
@@ -53,11 +64,16 @@ class SolverContext:
         self.lessons_by_class_subject: dict[tuple[int, int], list[Lesson]] = {}
         for L in lessons:
             a = L.assignment
-            self.lessons_by_class.setdefault(a.school_class_id, []).append(L)
+            # A pooled lesson appears in every member-class's lesson list,
+            # so the "no two lessons at the same slot for one class" constraint
+            # blocks any class in the pool from a conflicting subject.
+            class_ids = self.pool_classes.get(a.id) or [a.school_class_id]
+            for cid in class_ids:
+                self.lessons_by_class.setdefault(cid, []).append(L)
+                self.lessons_by_class_subject.setdefault(
+                    (cid, a.subject_id), []
+                ).append(L)
             self.lessons_by_teacher.setdefault(a.teacher_id, []).append(L)
-            self.lessons_by_class_subject.setdefault(
-                (a.school_class_id, a.subject_id), []
-            ).append(L)
 
         self._at_slot: dict[tuple[int, int], object] = {}
 
