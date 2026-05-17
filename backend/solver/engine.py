@@ -169,6 +169,80 @@ def _build_blocks(assignments: list[TeachingAssignment]) -> list[ScheduleBlock]:
 # Default constraint application
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _add_window_terms(
+    model: cp_model.CpModel,
+    vars_by_owner: dict[int, list],
+    slot_index_for: dict[tuple[int, int], int],
+    days: list[int],
+    periods_per_day: int,
+    *,
+    name_prefix: str = '',
+) -> list:
+    """Build the set of "window" (gap) bool vars for either teachers or
+    classes. Returns the list of bool vars; each is 1 iff the owner has
+    no lesson at that (day, period) but has lessons both before and
+    after the period within the same day.
+
+    The encoding for owner O, day D, period P:
+
+      has[O, D, P]     = 1 iff O teaches/attends a lesson at (D, P)
+      before[O, D, P]  = 1 iff has[O, D, p] = 1 for some p < P
+      after [O, D, P]  = 1 iff has[O, D, p] = 1 for some p > P
+      window[O, D, P]  = (1 - has) AND before AND after
+
+    has[O, D, P] is the sum of channeling booleans
+    "owner's slot var equals slot_index_for[(D, P)]" — at most one is
+    true because of the per-owner all_different.
+    """
+    window_terms = []
+    for owner_id, slot_vars in vars_by_owner.items():
+        if not slot_vars:
+            continue
+        for day in days:
+            has = []
+            for p in range(1, periods_per_day + 1):
+                target_slot = slot_index_for.get((day, p))
+                if target_slot is None:
+                    has.append(None)
+                    continue
+                indicators = []
+                for v in slot_vars:
+                    b = model.new_bool_var('')
+                    model.add(v == target_slot).only_enforce_if(b)
+                    model.add(v != target_slot).only_enforce_if(b.negated())
+                    indicators.append(b)
+                # has_p = OR of indicators (= sum, since all_different
+                # guarantees at most one is true).
+                has_p = model.new_bool_var(f'{name_prefix}_has_{owner_id}_{day}_{p}')
+                if indicators:
+                    model.add(has_p == sum(indicators))
+                else:
+                    model.add(has_p == 0)
+                has.append(has_p)
+
+            # before[p] = OR of has[0..p-1]; after[p] = OR of has[p+1..]
+            for p_idx in range(len(has)):
+                hp = has[p_idx]
+                if hp is None:
+                    continue
+                before_terms = [h for h in has[:p_idx] if h is not None]
+                after_terms = [h for h in has[p_idx + 1:] if h is not None]
+                if not before_terms or not after_terms:
+                    continue
+                before = model.new_bool_var('')
+                model.add_max_equality(before, before_terms)
+                after = model.new_bool_var('')
+                model.add_max_equality(after, after_terms)
+                window = model.new_bool_var(f'{name_prefix}_win_{owner_id}_{day}_{p_idx + 1}')
+                # window = (1 - hp) AND before AND after
+                model.add(window <= 1 - hp)
+                model.add(window <= before)
+                model.add(window <= after)
+                model.add(window >= before + after - hp - 1)
+                window_terms.append(window)
+    return window_terms
+
+
 def _apply_default_constraints(
     model: cp_model.CpModel,
     blocks: list[ScheduleBlock],
@@ -371,6 +445,67 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     # Step 6: sane defaults (max-per-day for class and per-subject spread)
     # unless user constraints already cover them.
     _apply_default_constraints(model, blocks, time_slots, slots_by_day, user_constraints)
+
+    # Step 7: build the objective function. Three weighted terms:
+    #
+    #   1. **Teacher windows (חלונות)**: the dominant comfort metric for
+    #      teachers — a gap between two of their lessons on the same day.
+    #      Modeled as: for each (teacher, day, period), a bool that is
+    #      true iff the teacher is *idle* at that period but has lessons
+    #      both before and after the period that day. Minimizing this
+    #      sum is equivalent to minimizing the total daily span minus
+    #      lesson count.
+    #
+    #   2. **Class windows**: same idea for classes. Students don't like
+    #      free periods in the middle of their day either, though they
+    #      tolerate them more than teachers do — lower weight.
+    #
+    #   3. **Last-period lessons**: prefer mornings for teaching by
+    #      penalizing slots in the last two periods (period 9, 10). The
+    #      penalty is small so it only matters as a tiebreaker.
+    #
+    # The weights below were chosen to put teacher windows in the lead;
+    # tweak them if the school cares about a different balance.
+    periods_per_day = max(ts.period for ts in time_slots)
+    slot_index_for: dict[tuple[int, int], int] = {}
+    for i, ts in enumerate(time_slots):
+        slot_index_for[(ts.day, ts.period)] = i
+
+    days = sorted(slots_by_day.keys())
+
+    objective_terms = []
+
+    teacher_window_terms = _add_window_terms(
+        model, vars_by_teacher, slot_index_for, days, periods_per_day,
+        name_prefix='teacher',
+    )
+    objective_terms.extend((10, t) for t in teacher_window_terms)
+
+    class_window_terms = _add_window_terms(
+        model, vars_by_class, slot_index_for, days, periods_per_day,
+        name_prefix='class',
+    )
+    objective_terms.extend((3, t) for t in class_window_terms)
+
+    # Last-period penalty: each slot var picks the period; we add a
+    # tiny cost when the chosen period is in the last 2 periods.
+    if periods_per_day >= 9:
+        late_slots = {i for (d, p), i in slot_index_for.items() if p >= periods_per_day - 1}
+        for vars_list in vars_by_class.values():
+            for v in vars_list:
+                bv = model.new_bool_var('')
+                # Force bv to indicate "v is a late slot" via channeling.
+                model.add_allowed_assignments(
+                    [v, bv],
+                    [(s, 1) for s in late_slots]
+                    + [(s, 0) for s in range(num_slots) if s not in late_slots],
+                )
+                objective_terms.append((1, bv))
+
+    if objective_terms:
+        model.minimize(
+            sum(coef * term for coef, term in objective_terms)
+        )
 
     # ── Solve ────────────────────────────────────────────────────────────
     solver = cp_model.CpSolver()

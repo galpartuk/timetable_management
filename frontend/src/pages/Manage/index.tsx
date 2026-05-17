@@ -20,7 +20,8 @@ import {
 import {
   bulkDelete, clearTimetableEntries, deleteTimetable, exportExcel,
   getExportOptions, getTimetables, uploadExcel, getGapAnalysis,
-  type ImportResponse, type GapAnalysis,
+  getTimetableQuality,
+  type ImportResponse, type GapAnalysis, type TimetableQuality,
 } from '../../api/client';
 
 // ── catalog of export sheets, with friendly Hebrew labels and a hint of
@@ -52,7 +53,7 @@ const GROUP_TITLES: Record<SheetMeta['group'], string> = {
   admin: 'ניהול ובקרה',
 };
 
-type TabValue = 'import' | 'export' | 'gaps' | 'manage';
+type TabValue = 'import' | 'export' | 'gaps' | 'quality' | 'manage';
 
 export default function ManagePage() {
   const { t } = useTranslation();
@@ -72,12 +73,14 @@ export default function ManagePage() {
       <Box sx={{ display: 'inline-flex', gap: 0.5, padding: 0.5, background: 'grey.100', borderRadius: 3, mb: 3 }}>
         <PillTab label="ייבוא Excel" active={tab === 'import'} onClick={() => setTab('import')} />
         <PillTab label="פערי נתונים" active={tab === 'gaps'} onClick={() => setTab('gaps')} />
+        <PillTab label="איכות מערכת" active={tab === 'quality'} onClick={() => setTab('quality')} />
         <PillTab label="ייצוא" active={tab === 'export'} onClick={() => setTab('export')} />
         <PillTab label="ניהול נתונים" active={tab === 'manage'} onClick={() => setTab('manage')} danger />
       </Box>
 
       {tab === 'import' && <ImportTab />}
       {tab === 'gaps' && <GapAnalysisTab />}
+      {tab === 'quality' && <QualityTab />}
       {tab === 'export' && <ExportTab />}
       {tab === 'manage' && <ManageTab />}
     </Box>
@@ -944,6 +947,228 @@ function GapAnalysisTab() {
         </CardContent>
       </Card>
     </Stack>
+  );
+}
+
+// ── QUALITY DASHBOARD TAB ─────────────────────────────────────────────────
+
+function QualityTab() {
+  const [timetables, setTimetables] = useState<any[]>([]);
+  const [timetableId, setTimetableId] = useState<number | ''>('');
+  const [quality, setQuality] = useState<TimetableQuality | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getTimetables().then((r) => {
+      const list = r.data.results ?? [];
+      setTimetables(list);
+      if (list.length > 0) setTimetableId(list[0].id);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!timetableId) return;
+    setLoading(true);
+    setError('');
+    getTimetableQuality(timetableId as number)
+      .then((r) => setQuality(r.data))
+      .catch((e) => setError(e.response?.data?.error || 'טעינת הנתונים נכשלה'))
+      .finally(() => setLoading(false));
+  }, [timetableId]);
+
+  if (loading && !quality) {
+    return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
+  }
+
+  return (
+    <Stack spacing={2.5}>
+      <Card>
+        <CardContent>
+          <TextField
+            select size="small" fullWidth
+            label="מערכת לבדיקה"
+            value={timetableId}
+            onChange={(e) => setTimetableId(Number(e.target.value))}
+            sx={{ maxWidth: 360 }}
+          >
+            {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
+            {timetables.map((tt: any) => (
+              <MenuItem key={tt.id} value={tt.id}>
+                {tt.name} — {tt.academic_year} ({tt.status})
+              </MenuItem>
+            ))}
+          </TextField>
+        </CardContent>
+      </Card>
+
+      {error && <Alert severity="error">{error}</Alert>}
+
+      {quality && (
+        <>
+          <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+            <QualityMetric
+              label="סך השיעורים"
+              value={quality.totals.entries}
+              tone="primary"
+            />
+            <QualityMetric
+              label="חלונות מורים (סך)"
+              value={quality.totals.total_teacher_windows}
+              hint={`ממוצע ${quality.totals.avg_teacher_windows.toFixed(2)} לכל מורה`}
+              tone={
+                quality.totals.total_teacher_windows < 30 ? 'good'
+                : quality.totals.total_teacher_windows < 100 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
+              label="חלונות כיתות (סך)"
+              value={quality.totals.total_class_windows}
+              hint={`${quality.totals.classes_with_windows} כיתות מושפעות`}
+              tone={
+                quality.totals.total_class_windows < 10 ? 'good'
+                : quality.totals.total_class_windows < 50 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
+              label="מורים עם חלונות"
+              value={quality.totals.teachers_with_windows}
+              hint={`מתוך ${quality.teachers.length} מורים`}
+            />
+            <QualityMetric
+              label="שיעורים אחרי 8"
+              value={quality.totals.late_period_lessons}
+              tone="warn"
+            />
+          </Stack>
+
+          <Card>
+            <CardContent>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1.5 }}>
+                15 המורים עם הכי הרבה חלונות
+              </Typography>
+              <Box sx={{ overflow: 'auto' }}>
+                <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
+                  <Box component="thead">
+                    <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.75, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700, fontSize: 11, color: 'grey.600', textTransform: 'uppercase' } }}>
+                      <Box component="th">מורה</Box>
+                      <Box component="th">שיעורים</Box>
+                      <Box component="th">חלונות</Box>
+                      <Box component="th">ימי הוראה</Box>
+                      <Box component="th">חלונות לפי יום</Box>
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {quality.teachers
+                      .filter((t) => t.windows > 0)
+                      .slice(0, 15)
+                      .map((t) => (
+                        <Box key={t.id} component="tr" sx={{ '& td': { py: 0.75, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
+                          <Box component="td" sx={{ fontWeight: 600 }}>{t.name}</Box>
+                          <Box component="td">{t.lessons}</Box>
+                          <Box component="td">
+                            <Chip size="small" label={t.windows}
+                                  sx={{ height: 18, fontSize: 10,
+                                    background: t.windows >= 5 ? 'rgba(244,63,94,0.10)' : 'rgba(245,158,11,0.10)',
+                                    color: t.windows >= 5 ? 'error.dark' : '#b45309' }} />
+                          </Box>
+                          <Box component="td">{t.days_taught}</Box>
+                          <Box component="td">
+                            {Object.entries(t.windows_by_day).map(([day, count]) => (
+                              <Chip key={day} size="small"
+                                    label={`${['', 'א', 'ב', 'ג', 'ד', 'ה'][Number(day)]}:${count}`}
+                                    sx={{ height: 16, fontSize: 9, mr: 0.5 }} />
+                            ))}
+                          </Box>
+                        </Box>
+                      ))}
+                    {quality.teachers.filter((t) => t.windows > 0).length === 0 && (
+                      <Box component="tr">
+                        <Box component="td" colSpan={5} sx={{ py: 3, textAlign: 'center', color: 'grey.500' }}>
+                          ✓ אין חלונות אצל אף מורה — מערכת מצוינת!
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>
+                כיתות עם חלונות (פסיכולוגית מקובלים יותר מאשר אצל מורים)
+              </Typography>
+              <Box sx={{ overflow: 'auto' }}>
+                <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
+                  <Box component="thead">
+                    <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.75, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700, fontSize: 11, color: 'grey.600', textTransform: 'uppercase' } }}>
+                      <Box component="th">כיתה</Box>
+                      <Box component="th">שיעורים</Box>
+                      <Box component="th">חלונות</Box>
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {quality.classes.filter((c) => c.windows > 0).slice(0, 15).map((c) => (
+                      <Box key={c.id} component="tr" sx={{ '& td': { py: 0.75, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
+                        <Box component="td" sx={{ fontWeight: 600 }}>{c.name}</Box>
+                        <Box component="td">{c.lessons}</Box>
+                        <Box component="td">
+                          <Chip size="small" label={c.windows}
+                                sx={{ height: 18, fontSize: 10,
+                                  background: 'rgba(245,158,11,0.10)', color: '#b45309' }} />
+                        </Box>
+                      </Box>
+                    ))}
+                    {quality.classes.filter((c) => c.windows > 0).length === 0 && (
+                      <Box component="tr">
+                        <Box component="td" colSpan={3} sx={{ py: 3, textAlign: 'center', color: 'grey.500' }}>
+                          ✓ אין חלונות אצל אף כיתה
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </Stack>
+  );
+}
+
+function QualityMetric({ label, value, hint, tone }: {
+  label: string;
+  value: number;
+  hint?: string;
+  tone?: 'good' | 'warn' | 'bad' | 'primary';
+}) {
+  const palette = {
+    good: { bg: 'rgba(16,185,129,0.10)', fg: '#047857' },
+    warn: { bg: 'rgba(245,158,11,0.10)', fg: '#b45309' },
+    bad: { bg: 'rgba(244,63,94,0.10)', fg: '#be123c' },
+    primary: { bg: 'rgba(79,70,229,0.08)', fg: 'primary.dark' },
+  }[tone || 'good'];
+  return (
+    <Box sx={{
+      flex: '1 1 180px', minWidth: 180,
+      p: 2,
+      borderRadius: 2,
+      background: palette.bg,
+      color: palette.fg,
+    }}>
+      <Typography sx={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', opacity: 0.8 }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: 32, fontWeight: 800, lineHeight: 1, mt: 0.5 }}>
+        {value}
+      </Typography>
+      {hint && (
+        <Typography sx={{ fontSize: 11, opacity: 0.75, mt: 0.5 }}>{hint}</Typography>
+      )}
+    </Box>
   );
 }
 

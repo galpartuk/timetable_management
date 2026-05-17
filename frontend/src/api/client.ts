@@ -117,6 +117,46 @@ export const getTimetableByClass = (timetableId: number, classId: number) =>
 export const getTimetableByTeacher = (timetableId: number, teacherId: number) =>
   api.get(`/timetables/${timetableId}/by-teacher/${teacherId}/`);
 
+export interface TimetableQuality {
+  timetable_id: number;
+  name: string;
+  status: string;
+  totals: {
+    entries: number;
+    total_teacher_windows: number;
+    total_class_windows: number;
+    teachers_with_windows: number;
+    classes_with_windows: number;
+    avg_teacher_windows: number;
+    late_period_lessons: number;
+  };
+  teachers: Array<{
+    id: number;
+    name: string;
+    first_name: string;
+    last_name: string;
+    lessons: number;
+    windows: number;
+    windows_by_day: Record<string, number>;
+    days_taught: number;
+    has_day_off: boolean;
+    day_off: number | null;
+  }>;
+  classes: Array<{
+    id: number;
+    name: string;
+    grade: string;
+    lessons: number;
+    windows: number;
+    windows_by_day: Record<string, number>;
+    day_spans: Record<string, { first: number; last: number }>;
+  }>;
+  subject_by_period: Record<string, Record<string, number>>;
+}
+
+export const getTimetableQuality = (timetableId: number) =>
+  api.get<TimetableQuality>(`/timetables/${timetableId}/quality/`);
+
 // Import
 export interface ImportPreview {
   sheets_seen: string[];

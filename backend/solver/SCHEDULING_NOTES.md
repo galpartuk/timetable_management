@@ -202,3 +202,139 @@ scheduling and why.
 - **Specific subject FK errors** during `bulk_create` of entries =
   data race; the parser left a stale subject reference. Re-run the
   importer with `wipe_existing=True`.
+
+---
+
+## The objective function — and why it matters
+
+The solver doesn't just find a *feasible* timetable; it finds one
+that **minimizes a weighted sum** of three undesirable properties.
+Feasibility-only gave us this:
+
+- 1097 teacher windows (avg 6.8 per teacher, worst was 24)
+- 629 class windows
+- ~310 lessons in late periods (9, 10)
+
+…which is technically valid but operationally awful: teachers would
+sit at school during their windows waiting for the next class, classes
+would have free periods mid-day, and afternoons would be packed with
+academic subjects.
+
+With the objective function active, the same input produces:
+
+- **29 teacher windows** (a 97% reduction; avg 0.18, worst is 6)
+- **6 class windows** (a 99% reduction)
+- Tighter morning loading
+
+The objective is, in priority order:
+
+### Weight 10 — Teacher windows (חלונות)
+
+For each (teacher, day, period) with the teacher idle at that period
+but having lessons both before and after the same day, we add a
+boolean cost. Encoded as `window = (1 − has_lesson) ∧ before ∧ after`
+where `before` and `after` are bool indicators over the teacher's
+other lessons that day. This dominates the objective — Israeli
+high-school teachers strongly prefer back-to-back days with no gaps.
+
+### Weight 3 — Class windows
+
+Same shape for classes. Lower weight because students tolerate
+mid-day gaps better than teachers (a free period can mean homework
+or socializing), but mid-day windows still get penalized.
+
+### Weight 1 — Late-period lessons
+
+Each slot in period 9 or 10 adds 1 to the objective. Acts as a
+tiebreaker that pushes lessons toward the morning. Heavy academic
+subjects don't get specific treatment yet (see follow-ups) but the
+school can add `Constraint(no_last_period, subject=math)` to give
+math priority.
+
+### Trade-offs of objective optimization
+
+The objective grows the model significantly:
+
+- ~ 8,000 additional boolean variables (has_lesson cells per
+  (teacher, day, period) and per (class, day, period))
+- ~ 4,000 additional bool windows + before/after auxiliaries
+
+Solve time went from 3.4 s (feasibility) → ~120 s for an excellent
+feasible solution (97% better). Optimality proof can take longer but
+isn't usually worth waiting for — the marginal improvement past the
+first feasible-with-objective solution is tiny.
+
+To prioritize speed over quality, set `max_time_seconds` lower (e.g.,
+30 s) and accept a sub-optimal solution. Status `FEASIBLE` is fine —
+the school cares about *low* windows, not provably-optimal windows.
+
+---
+
+## Roadmap (ranked by impact × ease)
+
+### High value — short term
+
+1. **Lunch-window enforcement.** Reserve period 5 or 6 as a no-class
+   slot for at least *one* of (class, teacher) per grade level. The
+   school typically operates on a 4–5 / 6–10 structure with a midday
+   break.
+2. **Per-teacher availability windows.** Many teachers prefer "no
+   first period on Sundays" or "free Thursday afternoon". The
+   `Constraint(teacher_availability)` handler already supports this;
+   the missing piece is a UI for entering preferences and a way to
+   distinguish hard ("can't") from soft ("prefer not to") preferences.
+3. **Soft vs hard distinction.** Currently every Constraint record is
+   a hard constraint. Switching `Constraint.priority='soft'` should
+   add a weighted penalty to the objective instead of a constraint —
+   the engine doesn't yet do this.
+4. **Subject-period preferences.** Add a "prefer mornings" weight for
+   math/English (multiplier on the late-period penalty when the
+   subject is on the list). Easy CP-SAT add, big quality win.
+
+### Medium value — medium term
+
+5. **Room scheduling.** Add a Room model + `all_different` over
+   (room, slot). Subjects can require a specific room (e.g., chem
+   lab, gym). The model + solver hook is straightforward; the
+   adoption blocker is collecting the room-requirement data.
+6. **Double-period pairs.** Math, lab subjects, and art classes are
+   often scheduled as doubles. Currently the solver treats every
+   lesson as a single period. Encoding "lessons X and Y must be
+   consecutive" requires `add_modulo_equality(slot_X, periods_per_day)
+   == add_modulo_equality(slot_Y, periods_per_day) ± 1`.
+7. **Multiple-timetable comparison.** Generate 3 timetables with
+   different objective weights; let the principal browse all three
+   and pick. Just a UI iteration over the existing solver.
+8. **Lock-and-iterate.** Pin specific entries the user is happy with
+   (a "lock" checkbox on each cell) and re-solve only the rest. The
+   solver wires this in via `add(var == fixed_value)` for locked
+   lessons.
+
+### Low value — long term
+
+9. **Bagrut window auto-placement.** Today bagrut electives are
+   imported as inactive — the school books them manually. We could
+   add a "bagrut window" Constraint type that designates specific
+   slots for bagrut subjects, then re-include those assignments.
+10. **Student schedules.** Currently we schedule classes, not
+    students. For schools where students cross-attend, modeling per-
+    student timetables (with parent ↔ child class membership) would
+    enable better elective scheduling.
+11. **Teacher load smoothing.** Minimize max(teacher_daily_load) −
+    min(teacher_daily_load) so a teacher's hours are spread evenly
+    instead of "5 hours Monday, 0 hours Tuesday". Costs in solve time
+    but creates a fairer schedule.
+12. **What-if scenarios.** Save multiple objective-weight presets
+    (e.g., "teacher-friendly", "morning-heavy", "lunch-strict"), let
+    the user toggle and compare.
+
+### Quality observability — already shipped (2026-05-18)
+
+- `GET /api/timetables/{id}/quality/` returns per-teacher and per-class
+  window counts plus an aggregate score. Used by the new dashboard
+  and inline grid annotations.
+- The /timetable page shows windows in teacher view as orange dashed
+  cells labeled "חלון", with a side panel listing per-day window
+  counts and day spans.
+- The /manage page has a new "איכות מערכת" tab with the worst-15
+  teachers by windows, classes with windows, and aggregate metrics.

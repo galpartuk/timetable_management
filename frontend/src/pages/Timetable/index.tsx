@@ -11,6 +11,7 @@ import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
+  getTimetableQuality, type TimetableQuality,
 } from '../../api/client';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
@@ -36,6 +37,7 @@ export default function TimetablePage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [quality, setQuality] = useState<TimetableQuality | null>(null);
   const isRtl = i18n.language === 'he';
 
   useEffect(() => {
@@ -49,6 +51,16 @@ export default function TimetablePage() {
   }, []);
 
   useEffect(() => {
+    if (!selectedTT) {
+      setQuality(null);
+      return;
+    }
+    getTimetableQuality(selectedTT.id)
+      .then((r) => setQuality(r.data))
+      .catch(() => setQuality(null));
+  }, [selectedTT?.id]);
+
+  useEffect(() => {
     if (!selectedTT || !selectedId) {
       setEntries([]);
       return;
@@ -58,6 +70,15 @@ export default function TimetablePage() {
       .then((r) => setEntries(r.data))
       .catch(() => setEntries([]));
   }, [selectedTT, selectedId, viewMode]);
+
+  // Find the quality info for the currently-selected teacher / class
+  const selectedQuality = useMemo(() => {
+    if (!quality || !selectedId) return null;
+    if (viewMode === 'teacher') {
+      return quality.teachers.find((t) => t.id === selectedId) || null;
+    }
+    return quality.classes.find((c) => c.id === selectedId) || null;
+  }, [quality, selectedId, viewMode]);
 
   const handleGenerate = async () => {
     if (!selectedTT) return;
@@ -210,12 +231,25 @@ export default function TimetablePage() {
         </CardContent>
       </Card>
 
+      {selectedTT && quality && (
+        <QualitySummaryBar quality={quality} />
+      )}
+
       {selectedTT && selectedId ? (
-        <Card>
-          <CardContent sx={{ p: { xs: 1.5, md: 2.5 }, overflowX: 'auto' }}>
-            <TimetableGrid grid={grid} viewMode={viewMode} />
-          </CardContent>
-        </Card>
+        <Box sx={{ display: 'flex', gap: 2.5, flexDirection: { xs: 'column', lg: 'row' } }}>
+          <Card sx={{ flex: 1, minWidth: 0 }}>
+            <CardContent sx={{ p: { xs: 1.5, md: 2.5 }, overflowX: 'auto' }}>
+              <TimetableGrid grid={grid} viewMode={viewMode} entries={entries} />
+            </CardContent>
+          </Card>
+          {selectedQuality && (
+            <SelectionDetailCard
+              quality={selectedQuality}
+              viewMode={viewMode}
+              entries={entries}
+            />
+          )}
+        </Box>
       ) : (
         <Card>
           <CardContent sx={{ py: 8 }}>
@@ -271,11 +305,29 @@ export default function TimetablePage() {
 function TimetableGrid({
   grid,
   viewMode,
+  entries,
 }: {
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
+  entries: any[];
 }) {
   const { t } = useTranslation();
+
+  // Pre-compute, for each day, the range of periods the selected owner
+  // actually teaches/attends — so we can render empty cells *within*
+  // that range as "windows" (חלונות) and cells outside it as plain idle.
+  const dayBounds = useMemo(() => {
+    const bounds: Record<number, { min: number; max: number } | null> = {};
+    for (let day = 1; day <= 5; day++) {
+      const periods = entries
+        .filter((e: any) => e.day === day)
+        .map((e: any) => e.period);
+      bounds[day] = periods.length
+        ? { min: Math.min(...periods), max: Math.max(...periods) }
+        : null;
+    }
+    return bounds;
+  }, [entries]);
 
   return (
     <Box
@@ -297,6 +349,7 @@ function TimetableGrid({
           period={period}
           grid={grid}
           viewMode={viewMode}
+          dayBounds={dayBounds}
         />
       ))}
     </Box>
@@ -307,10 +360,12 @@ function PeriodRow({
   period,
   grid,
   viewMode,
+  dayBounds,
 }: {
   period: number;
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
+  dayBounds: Record<number, { min: number; max: number } | null>;
 }) {
   return (
     <>
@@ -331,15 +386,40 @@ function PeriodRow({
         {period}
       </Box>
       {DAYS.map((_, dayIdx) => {
-        const entry = grid[`${dayIdx + 1}-${period}`];
-        return <Cell key={dayIdx} entry={entry} viewMode={viewMode} />;
+        const day = dayIdx + 1;
+        const entry = grid[`${day}-${period}`];
+        const bound = dayBounds[day];
+        const isWindow =
+          !entry && !!bound && period > bound.min && period < bound.max;
+        return <Cell key={dayIdx} entry={entry} viewMode={viewMode} isWindow={isWindow} />;
       })}
     </>
   );
 }
 
-function Cell({ entry, viewMode }: { entry: any; viewMode: 'class' | 'teacher' }) {
+function Cell({ entry, viewMode, isWindow }: { entry: any; viewMode: 'class' | 'teacher'; isWindow?: boolean }) {
   if (!entry) {
+    if (isWindow) {
+      return (
+        <Box
+          sx={{
+            minHeight: 76,
+            borderRadius: 2,
+            border: '1px dashed',
+            borderColor: '#f59e0b',
+            background: 'rgba(245, 158, 11, 0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#b45309',
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          חלון
+        </Box>
+      );
+    }
     return (
       <Box
         sx={{
@@ -410,6 +490,188 @@ function GridHeader({ children }: { children: React.ReactNode }) {
     >
       {children}
     </Box>
+  );
+}
+
+// ── Quality summary bar ──────────────────────────────────────────────────
+
+function QualitySummaryBar({ quality }: { quality: TimetableQuality }) {
+  const t = quality.totals;
+  return (
+    <Card sx={{ mb: 2.5 }}>
+      <CardContent sx={{ py: 1.5 }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}
+          sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}>
+          <Box>
+            <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'grey.700' }}>
+              סיכום איכות המערכת
+            </Typography>
+            <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
+              מערכת זו נוצרה תוך מזעור חלונות המורים והכיתות. ככל שהמספרים נמוכים יותר — המערכת איכותית יותר.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
+            <Stat
+              label="שיעורים"
+              value={t.entries}
+              color="primary"
+            />
+            <Stat
+              label="חלונות מורים"
+              value={t.total_teacher_windows}
+              tone={t.total_teacher_windows < 30 ? 'good' : t.total_teacher_windows < 100 ? 'warn' : 'bad'}
+              hint={`${t.teachers_with_windows} מורים מושפעים`}
+            />
+            <Stat
+              label="חלונות כיתות"
+              value={t.total_class_windows}
+              tone={t.total_class_windows < 10 ? 'good' : t.total_class_windows < 50 ? 'warn' : 'bad'}
+              hint={`${t.classes_with_windows} כיתות מושפעות`}
+            />
+            <Stat
+              label="שיעורים אחרי 8"
+              value={t.late_period_lessons}
+              tone="warn"
+            />
+          </Stack>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Stat({ label, value, tone, hint, color }: {
+  label: string;
+  value: number;
+  tone?: 'good' | 'warn' | 'bad';
+  hint?: string;
+  color?: 'primary' | 'default';
+}) {
+  const palette = {
+    good: { bg: 'rgba(16, 185, 129, 0.10)', fg: '#047857' },
+    warn: { bg: 'rgba(245, 158, 11, 0.10)', fg: '#b45309' },
+    bad: { bg: 'rgba(244, 63, 94, 0.10)', fg: '#be123c' },
+  }[tone || 'good'];
+  const isPrimary = color === 'primary';
+  return (
+    <Box sx={{
+      px: 1.5, py: 1,
+      borderRadius: 2,
+      background: isPrimary ? 'rgba(79,70,229,0.08)' : palette.bg,
+      color: isPrimary ? 'primary.dark' : palette.fg,
+      minWidth: 120,
+    }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 700, opacity: 0.7, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: 22, fontWeight: 800, lineHeight: 1, mt: 0.25 }}>
+        {value}
+      </Typography>
+      {hint && (
+        <Typography sx={{ fontSize: 10, opacity: 0.7, mt: 0.25 }}>
+          {hint}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+// ── Per-entity detail panel (shown next to the timetable grid) ──────────
+
+function SelectionDetailCard({ quality, viewMode, entries }: {
+  quality: any;
+  viewMode: 'class' | 'teacher';
+  entries: any[];
+}) {
+  const totalLessons = entries.length;
+  const dayLabels: Record<number, string> = { 1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי' };
+
+  // Per-day lesson counts and span
+  const days = [1, 2, 3, 4, 5].map((d) => {
+    const periods = entries.filter((e: any) => e.day === d).map((e: any) => e.period);
+    const lessons = periods.length;
+    const first = periods.length ? Math.min(...periods) : null;
+    const last = periods.length ? Math.max(...periods) : null;
+    const span = first && last ? last - first + 1 : 0;
+    const windows = lessons > 0 ? Math.max(0, span - lessons) : 0;
+    return { day: d, lessons, first, last, span, windows };
+  });
+
+  return (
+    <Card sx={{ flex: '0 0 320px', alignSelf: 'flex-start' }}>
+      <CardContent>
+        <Typography sx={{ fontSize: 15, fontWeight: 800, mb: 0.5 }}>
+          {quality.name}
+        </Typography>
+        <Typography sx={{ fontSize: 12, color: 'grey.500', mb: 2 }}>
+          {viewMode === 'teacher'
+            ? `${totalLessons} שיעורים · ${quality.days_taught || 0} ימי הוראה`
+            : `${totalLessons} שיעורים · ${days.filter((d) => d.lessons > 0).length} ימי לימוד`}
+        </Typography>
+
+        <Box sx={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5, mb: 2,
+        }}>
+          <Box sx={{ background: 'rgba(245,158,11,0.10)', borderRadius: 2, p: 1.25 }}>
+            <Typography sx={{ fontSize: 10, color: '#b45309', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+              חלונות
+            </Typography>
+            <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#b45309', mt: 0.25 }}>
+              {quality.windows}
+            </Typography>
+          </Box>
+          <Box sx={{ background: 'rgba(79,70,229,0.08)', borderRadius: 2, p: 1.25 }}>
+            <Typography sx={{ fontSize: 10, color: 'primary.dark', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+              שיעורים
+            </Typography>
+            <Typography sx={{ fontSize: 22, fontWeight: 800, color: 'primary.dark', mt: 0.25 }}>
+              {quality.lessons}
+            </Typography>
+          </Box>
+        </Box>
+
+        <Typography sx={{ fontSize: 12, fontWeight: 700, color: 'grey.700', mb: 1 }}>
+          פירוט יומי
+        </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {days.map((d) => (
+            <Box
+              key={d.day}
+              sx={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'center', py: 0.5, px: 1, borderRadius: 1.5,
+                background: d.lessons === 0 ? 'transparent' : 'grey.50',
+              }}
+            >
+              <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{dayLabels[d.day]}</Typography>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                {d.lessons === 0 ? (
+                  <Chip size="small" label="חופש" sx={{ height: 18, fontSize: 10 }} />
+                ) : (
+                  <>
+                    <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
+                      {d.lessons} שיעורים · שיעור {d.first}–{d.last}
+                    </Typography>
+                    {d.windows > 0 && (
+                      <Chip size="small" label={`${d.windows} חלון`}
+                            sx={{ height: 18, fontSize: 10, background: 'rgba(245,158,11,0.15)', color: '#b45309' }} />
+                    )}
+                  </>
+                )}
+              </Stack>
+            </Box>
+          ))}
+        </Box>
+
+        {viewMode === 'teacher' && quality.has_day_off && (
+          <Box sx={{ mt: 2, p: 1.25, background: 'grey.50', borderRadius: 1.5 }}>
+            <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
+              יום חופש: {dayLabels[quality.day_off]}
+            </Typography>
+          </Box>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
