@@ -205,6 +205,25 @@ export interface ImportPreview {
   top_teachers: [string, number][];
   warnings: string[];
   errors: string[];
+  diff?: {
+    new_teachers: string[];
+    new_teachers_count: number;
+    removed_teachers: string[];
+    removed_teachers_count: number;
+    new_subjects: string[];
+    new_classes: string[];
+    new_rows_count: number;
+    stale_rows_count: number;
+    hours_changes_count: number;
+    hours_changes: Array<{
+      sheet: string;
+      row: number;
+      teacher: string;
+      subject: string;
+      old_hours: number;
+      new_hours: number;
+    }>;
+  };
 }
 
 export interface ImportResponse {

@@ -23,6 +23,83 @@ def _is_super_admin(user) -> bool:
     return getattr(getattr(user, 'profile', None), 'role', None) == 'super_admin'
 
 
+def _diff_against_db(parsed, school) -> dict:
+    """Compare a fresh ParsedWorkbook against the current DB state for
+    one school. Returns counts and small samples of:
+
+      • new_teachers / removed_teachers
+      • new_classes
+      • new_subjects
+      • assignments with changed weekly_hours (key on sheet+row)
+      • assignments in the import not in the DB (will be added)
+      • assignments in the DB not in the import (will linger as stale)
+
+    Used by the dry-run preview screen — shows the user exactly what
+    is going to change before they commit.
+    """
+    from apps.subjects.models import Teacher, Subject, TeachingAssignment
+    from apps.school.models import SchoolClass
+
+    db_teachers = set(Teacher.objects.filter(school=school)
+                      .values_list('first_name', flat=True))
+    db_subjects = set(Subject.objects.filter(school=school)
+                      .values_list('name_he', flat=True))
+    db_class_keys = set(
+        SchoolClass.objects.filter(grade__school=school)
+        .values_list('grade__name', 'number')
+    )
+
+    import_teachers: set[str] = set()
+    import_subjects: set[str] = set()
+    import_class_keys: set[tuple[str, int]] = set()
+    for r in parsed.assignment_rows:
+        if r.teacher:
+            import_teachers.add(r.teacher.strip())
+        import_subjects.add(r.subject)
+        for g, n in r.classes:
+            import_class_keys.add((g, n))
+
+    # Existing assignments keyed by (sheet, row) so we can compare hours.
+    db_hours_by_source = {
+        (a.source_sheet, a.source_row): float(a.weekly_hours or 0)
+        for a in TeachingAssignment.objects.filter(subject__school=school)
+        if a.source_sheet and a.source_row
+    }
+    hours_changes = []
+    new_rows_seen = set()
+    for r in parsed.assignment_rows:
+        if r.weekly_hours is None:
+            continue
+        key = (r.source_sheet, r.source_row)
+        new_rows_seen.add(key)
+        existing = db_hours_by_source.get(key)
+        new_hours = float(r.weekly_hours)
+        if existing is None:
+            continue  # truly new row → covered by `new_rows`
+        if abs(existing - new_hours) > 0.01:
+            hours_changes.append({
+                'sheet': r.source_sheet, 'row': r.source_row,
+                'teacher': r.teacher, 'subject': r.subject,
+                'old_hours': existing, 'new_hours': new_hours,
+            })
+
+    new_rows = [k for k in new_rows_seen if k not in db_hours_by_source]
+    stale_rows = [k for k in db_hours_by_source if k not in new_rows_seen]
+
+    return {
+        'new_teachers': sorted(import_teachers - db_teachers)[:50],
+        'new_teachers_count': len(import_teachers - db_teachers),
+        'removed_teachers': sorted(db_teachers - import_teachers)[:50],
+        'removed_teachers_count': len(db_teachers - import_teachers),
+        'new_subjects': sorted(import_subjects - db_subjects)[:30],
+        'new_classes': sorted([f'{g}{n}' for (g, n) in import_class_keys - db_class_keys])[:30],
+        'new_rows_count': len(new_rows),
+        'stale_rows_count': len(stale_rows),
+        'hours_changes_count': len(hours_changes),
+        'hours_changes': hours_changes[:30],
+    }
+
+
 def _summarize_parsed(parsed) -> dict:
     """Build a digest shown in the dry-run preview screen."""
     subjects = Counter(r.subject for r in parsed.assignment_rows)
@@ -102,6 +179,7 @@ def upload_excel(request):
         # Phase 1: analyze (no DB writes).
         parsed = analyze(file, file_name=file.name)
         preview = _summarize_parsed(parsed)
+        preview['diff'] = _diff_against_db(parsed, school)
         import_log.preview_data = preview
         import_log.warnings = parsed.warnings
         import_log.errors = parsed.errors

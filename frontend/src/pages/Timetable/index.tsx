@@ -7,7 +7,7 @@ import {
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Stack,
 } from '@mui/material';
-import { CalendarMonth, Add, AutoAwesome, DeleteOutlined } from '@mui/icons-material';
+import { CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print } from '@mui/icons-material';
 import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
@@ -186,10 +186,20 @@ export default function TimetablePage() {
             מחק
           </Button>
           <Button
+            variant="outlined"
+            startIcon={<Print />}
+            disabled={!selectedTT || !selectedId}
+            onClick={() => window.print()}
+            className="no-print"
+          >
+            הדפסה
+          </Button>
+          <Button
             variant="contained"
             startIcon={generating ? <CircularProgress size={18} color="inherit" /> : <AutoAwesome />}
             onClick={handleGenerate}
             disabled={generating || !selectedTT}
+            className="no-print"
           >
             {generating ? t('timetable.generating') : t('timetable.generate')}
           </Button>

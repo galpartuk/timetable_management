@@ -243,6 +243,114 @@ def _add_window_terms(
     return window_terms
 
 
+def _infeasibility_diagnostics(
+    school, vars_by_class: dict, vars_by_teacher: dict,
+    num_slots: int, teachers_by_id: dict,
+) -> list[str]:
+    """Surface the most likely causes of infeasibility — over-allocated
+    teachers / classes — without re-running the solver.
+
+    A class with > num_slots lesson-vars can't fit. A teacher likewise.
+    For both we list the top 5 offenders.
+    """
+    from apps.school.models import SchoolClass
+    from apps.subjects.models import Teacher
+
+    diagnostics: list[str] = []
+
+    over_classes = [
+        (cid, len(vs))
+        for cid, vs in vars_by_class.items()
+        if len(vs) > num_slots
+    ]
+    over_classes.sort(key=lambda x: -x[1])
+    for cid, n in over_classes[:5]:
+        cls = SchoolClass.objects.filter(id=cid).select_related('grade').first()
+        if cls:
+            diagnostics.append(
+                f'כיתה {cls.display_name}: {n} שיעורים אך רק {num_slots} משבצות'
+            )
+
+    over_teachers = [
+        (tid, len(vs))
+        for tid, vs in vars_by_teacher.items()
+        if len(vs) > num_slots
+    ]
+    over_teachers.sort(key=lambda x: -x[1])
+    for tid, n in over_teachers[:5]:
+        t = teachers_by_id.get(tid)
+        if t:
+            diagnostics.append(
+                f'מורה {t}: {n} שיעורים אך רק {num_slots} משבצות'
+            )
+
+    # Day-off vs load impossibility: if a teacher has > (num_slots - periods_per_day_off)
+    # lessons but a day-off, they can't fit.
+    for tid, vs in vars_by_teacher.items():
+        t = teachers_by_id.get(tid)
+        if t and t.day_off is not None:
+            slots_lost_to_day_off = num_slots // 5  # 5 days
+            if len(vs) > num_slots - slots_lost_to_day_off:
+                diagnostics.append(
+                    f'מורה {t}: {len(vs)} שיעורים אך יום חופש מקטין את המכסה ל-{num_slots - slots_lost_to_day_off}'
+                )
+
+    if not diagnostics:
+        diagnostics.append(
+            'לא נמצא גורם חד-משמעי. סביר להניח שהאילוצים סותרים '
+            '(לדוגמה: כיתה דורשת חלון לארוחה אך אין שעה פנויה).'
+        )
+    return diagnostics
+
+
+def _add_load_spread_terms(
+    model: cp_model.CpModel,
+    vars_by_owner: dict[int, list],
+    slot_index_for: dict[tuple[int, int], int],
+    days: list[int],
+) -> list:
+    """For each owner (teacher), compute the spread of their per-day
+    lesson counts (max - min over days they teach). The objective
+    minimizes the sum of those spreads, spreading load across the week.
+
+    We approximate this cheaply: for each (owner, day) compute a count
+    via channeling bools, then add a single spread IntVar = max - min
+    bounded by AddMaxEquality / AddMinEquality.
+
+    Returns a list of spread IntVars to feed into the objective.
+    """
+    spread_vars = []
+    for owner_id, slot_vars in vars_by_owner.items():
+        if len(slot_vars) < 2:
+            continue
+        # day_count[d] = number of vars assigned to a slot in day d.
+        day_counts = []
+        for day in days:
+            slots_in_day = {s for (d, _), s in slot_index_for.items() if d == day}
+            indicators = []
+            for v in slot_vars:
+                b = model.new_bool_var('')
+                model.add_allowed_assignments(
+                    [v, b],
+                    [(s, 1) for s in slots_in_day]
+                    + [(s, 0) for s in range(len(slot_index_for)) if s not in slots_in_day],
+                )
+                indicators.append(b)
+            count_var = model.new_int_var(0, len(slot_vars), f'load_{owner_id}_d{day}')
+            model.add(count_var == sum(indicators))
+            day_counts.append(count_var)
+        if not day_counts:
+            continue
+        max_var = model.new_int_var(0, len(slot_vars), '')
+        min_var = model.new_int_var(0, len(slot_vars), '')
+        model.add_max_equality(max_var, day_counts)
+        model.add_min_equality(min_var, day_counts)
+        spread = model.new_int_var(0, len(slot_vars), f'spread_{owner_id}')
+        model.add(spread == max_var - min_var)
+        spread_vars.append(spread)
+    return spread_vars
+
+
 def _apply_default_constraints(
     model: cp_model.CpModel,
     blocks: list[ScheduleBlock],
@@ -529,6 +637,16 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     )
     objective_terms.extend((10, t) for t in teacher_window_terms)
 
+    # Teacher daily-load balancing: minimize the spread between the
+    # teacher's busiest day and quietest day. A spread of 5 means
+    # "5 lessons Monday, 0 lessons Tuesday" — bad. A spread of 1 means
+    # the load is even. We add an IntVar per teacher for the spread and
+    # sum them into the objective.
+    spread_terms = _add_load_spread_terms(
+        model, vars_by_teacher, slot_index_for, days,
+    )
+    objective_terms.extend((2, s) for s in spread_terms)
+
     class_window_terms = _add_window_terms(
         model, vars_by_class, slot_index_for, days, periods_per_day,
         name_prefix='class',
@@ -603,11 +721,16 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     }.get(status, f'status={status}')
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        diagnostics = _infeasibility_diagnostics(
+            timetable.school, vars_by_class, vars_by_teacher,
+            num_slots, teachers_by_id,
+        )
         timetable.solver_log = (
             f'הפתרון נכשל: {status_label}\n'
             f'בלוקים: {len(blocks)}, משבצות זמן: {num_slots}, '
             f'מורים: {len(vars_by_teacher)}, כיתות: {len(vars_by_class)}\n'
-            f'זמן: {solver.wall_time:.1f} שניות'
+            f'זמן: {solver.wall_time:.1f} שניות\n'
+            + ('\nאבחון:\n' + '\n'.join(f'  • {d}' for d in diagnostics) if diagnostics else '')
         )
         return False
 

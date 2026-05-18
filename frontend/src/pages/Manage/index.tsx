@@ -727,6 +727,41 @@ function ImportTab() {
               </Box>
             )}
 
+            {p.diff && (
+              <Box sx={{ mb: 2, p: 1.5, background: 'rgba(79,70,229,0.04)', borderRadius: 2 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 700, mb: 1 }}>
+                  השוואה למצב הקיים בבסיס הנתונים
+                </Typography>
+                <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 1 }}>
+                  <DiffStat label="מורים חדשים" value={p.diff.new_teachers_count} tone="good" />
+                  <DiffStat label="מורים שיוסרו" value={p.diff.removed_teachers_count} tone={p.diff.removed_teachers_count > 0 ? 'warn' : 'good'} />
+                  <DiffStat label="מקצועות חדשים" value={p.diff.new_subjects.length} tone="good" />
+                  <DiffStat label="כיתות חדשות" value={p.diff.new_classes.length} tone="good" />
+                  <DiffStat label="שורות חדשות" value={p.diff.new_rows_count} tone="good" />
+                  <DiffStat label="שורות בלתי מעודכנות" value={p.diff.stale_rows_count} tone={p.diff.stale_rows_count > 0 ? 'warn' : 'good'} />
+                  <DiffStat label="שינויי שעות" value={p.diff.hours_changes_count} tone={p.diff.hours_changes_count > 0 ? 'warn' : 'good'} />
+                </Stack>
+                {p.diff.new_teachers.length > 0 && (
+                  <Typography sx={{ fontSize: 11, color: 'grey.700' }}>
+                    מורים חדשים: {p.diff.new_teachers.slice(0, 10).join(' · ')}
+                    {p.diff.new_teachers_count > 10 && ` · +${p.diff.new_teachers_count - 10}`}
+                  </Typography>
+                )}
+                {p.diff.hours_changes.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: 'grey.700' }}>
+                      שינויי שעות:
+                    </Typography>
+                    {p.diff.hours_changes.slice(0, 5).map((c, i) => (
+                      <Typography key={i} sx={{ fontSize: 11, color: 'grey.700' }}>
+                        {c.sheet} R{c.row} ({c.teacher} / {c.subject}): {c.old_hours} → <strong>{c.new_hours}</strong>
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            )}
+
             {p.warnings.length > 0 && (
               <Box sx={{ mb: 1.5 }}>
                 <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'warning.dark' }}>
@@ -796,6 +831,23 @@ function ImportTab() {
         </Alert>
       )}
     </Stack>
+  );
+}
+
+function DiffStat({ label, value, tone }: {
+  label: string; value: number; tone: 'good' | 'warn';
+}) {
+  const colors = tone === 'good'
+    ? { bg: 'rgba(16,185,129,0.10)', fg: '#047857' }
+    : { bg: 'rgba(245,158,11,0.10)', fg: '#b45309' };
+  return (
+    <Box sx={{
+      px: 1.25, py: 0.75, borderRadius: 2,
+      background: colors.bg, color: colors.fg,
+    }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 700, opacity: 0.85 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{value}</Typography>
+    </Box>
   );
 }
 
