@@ -20,6 +20,17 @@ class Env {
     defaultValue: '',
   );
 
+  /// App version (matches pubspec.yaml). Hardcoded — bump when pubspec bumps.
+  static const String appVersion = '0.1.0';
+
+  /// Build timestamp injected by the build command via
+  /// `--dart-define=BUILD_TIMESTAMP=...`. Local Israel time, format
+  /// "yyyy-MM-dd HH:mm". Empty in IDE runs without the define.
+  static const String buildTimestamp = String.fromEnvironment(
+    'BUILD_TIMESTAMP',
+    defaultValue: '',
+  );
+
   /// Connect timeout for the HTTP client.
   static const Duration httpConnectTimeout = Duration(seconds: 15);
 

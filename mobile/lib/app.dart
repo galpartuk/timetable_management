@@ -12,13 +12,13 @@ class App extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
-    final locale = ref.watch(localeProvider);
+    final selected = ref.watch(localeProvider);
 
     return MaterialApp.router(
       title: 'מערכת שעות',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      locale: locale,
+      locale: selected,
       supportedLocales: const [Locale('he'), Locale('en')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -27,11 +27,13 @@ class App extends ConsumerWidget {
       ],
       routerConfig: router,
       builder: (context, child) {
-        // Force RTL when Hebrew is selected; LTR for English.
+        // Hebrew → RTL, English → LTR. Material's automatic direction
+        // also follows locale, but we set it explicitly here to be
+        // resilient to any nested widget that overrides Directionality.
         return Directionality(
-          textDirection: locale.languageCode == 'he'
-              ? TextDirection.rtl
-              : TextDirection.ltr,
+          textDirection: selected.languageCode == 'en'
+              ? TextDirection.ltr
+              : TextDirection.rtl,
           child: child ?? const SizedBox.shrink(),
         );
       },

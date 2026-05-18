@@ -4,11 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/timetable_api.dart';
 import '../../auth/auth_provider.dart';
 import '../../auth/auth_state.dart';
+import '../../i18n/tr.dart';
 import '../../models/timetable.dart';
 import '../../models/timetable_entry.dart';
 import '../../repositories/timetable_repository.dart';
+import '../../state/view_as.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/lesson_card.dart';
+import '../../widgets/view_as_chip.dart';
 
 final timeSlotsProvider = FutureProvider<List<TimeSlot>>((ref) async {
   // Reference data — rarely changes; cached via Riverpod's keep-alive.
@@ -26,32 +29,55 @@ class TodayScreen extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     final user = auth.user;
-    final teacherId = user.teacherId;
-    final classId = user.schoolClassId;
-    if (teacherId == null && classId == null) {
-      return EmptyState(
-        icon: Icons.person_off_outlined,
-        title: 'אין מערכת שעות אישית',
-        subtitle: 'הפרופיל שלך לא מקושר למורה או לכיתה.\nפנו למנהל המערכת.',
+    final viewAs = ref.watch(viewAsProvider);
+    // Admin override wins; otherwise fall back to the user's own teacher/class.
+    final ScheduleOwner? owner = (viewAs != null && user.isAdmin)
+        ? viewAs.toOwner()
+        : (user.teacherId != null || user.schoolClassId != null
+            ? ScheduleOwner(
+                teacherId: user.teacherId,
+                classId: user.schoolClassId,
+              )
+            : null);
+    if (owner == null) {
+      return Column(
+        children: [
+          const ViewAsChip(),
+          Expanded(
+            child: EmptyState(
+              icon: Icons.person_off_outlined,
+              title: tr(context, 'אין מערכת שעות אישית'),
+              subtitle: user.isAdmin
+                  ? tr(context, 'בחרו מורה או כיתה כדי לצפות במערכת שלהם')
+                  : tr(context, 'הפרופיל שלך לא מקושר למורה או לכיתה.\nפנו למנהל המערכת.'),
+            ),
+          ),
+        ],
       );
     }
-    final owner = ScheduleOwner(teacherId: teacherId, classId: classId);
     final schedule = ref.watch(scheduleForOwnerProvider(owner));
     final slots = ref.watch(timeSlotsProvider);
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref.invalidate(scheduleForOwnerProvider(owner));
-      },
-      child: schedule.when(
-        data: (data) => _Body(data: data, slots: slots),
-        error: (e, _) => EmptyState(
-          icon: Icons.error_outline,
-          title: 'שגיאה',
-          subtitle: '$e',
+    return Column(
+      children: [
+        const ViewAsChip(),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              ref.invalidate(scheduleForOwnerProvider(owner));
+            },
+            child: schedule.when(
+              data: (data) => _Body(data: data, slots: slots),
+              error: (e, _) => EmptyState(
+                icon: Icons.error_outline,
+                title: tr(context, 'שגיאה'),
+                subtitle: '$e',
+              ),
+              loading: () => const Center(child: CircularProgressIndicator()),
+            ),
+          ),
         ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-      ),
+      ],
     );
   }
 }
@@ -77,8 +103,8 @@ class _Body extends StatelessWidget {
     if (today == null) {
       return EmptyState(
         icon: Icons.weekend_outlined,
-        title: 'סוף שבוע — אין לימודים היום',
-        subtitle: 'נתראה ביום ראשון 👋',
+        title: tr(context, 'סוף שבוע — אין לימודים היום'),
+        subtitle: tr(context, 'נתראה ביום ראשון 👋'),
       );
     }
     final entries = data.entries.where((e) => e.day == today).toList()
@@ -87,8 +113,8 @@ class _Body extends StatelessWidget {
     if (entries.isEmpty) {
       return EmptyState(
         icon: Icons.calendar_today_outlined,
-        title: 'אין שיעורים היום',
-        subtitle: 'יום ${_dayNames[today]}, ${DateTime.now().toString().split(" ").first}',
+        title: tr(context, 'אין שיעורים היום'),
+        subtitle: '${tr(context, 'יום')} ${tr(context, _dayNames[today]!)}, ${DateTime.now().toString().split(" ").first}',
       );
     }
 
@@ -118,12 +144,12 @@ class _Body extends StatelessWidget {
             child: _StaleBanner(lastUpdated: data.lastUpdated),
           ),
         Text(
-          'יום ${_dayNames[today]}',
+          '${tr(context, 'יום')} ${tr(context, _dayNames[today]!)}',
           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 4),
         Text(
-          'השיעור הבא',
+          tr(context, 'השיעור הבא'),
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
@@ -132,7 +158,7 @@ class _Body extends StatelessWidget {
         _NextLessonHero(entry: nextLesson, slot: slotMap[nextLesson.period]),
         const SizedBox(height: 24),
         Text(
-          'כל היום',
+          tr(context, 'כל היום'),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -185,11 +211,11 @@ class _NextLessonHero extends StatelessWidget {
       final dt = DateTime(now.year, now.month, now.day, start.hour, start.minute);
       final diff = dt.difference(now);
       if (diff.isNegative) {
-        inText = 'מתקיים עכשיו';
+        inText = tr(context, 'מתקיים עכשיו');
       } else if (diff.inMinutes < 60) {
-        inText = 'בעוד ${diff.inMinutes} דקות';
+        inText = trf(context, 'בעוד {0} דקות', [diff.inMinutes]);
       } else {
-        inText = 'בעוד ${diff.inHours} שעות';
+        inText = trf(context, 'בעוד {0} שעות', [diff.inHours]);
       }
     }
     return Container(
@@ -215,7 +241,7 @@ class _NextLessonHero extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'שיעור ${entry.period}',
+                  trf(context, 'שיעור {0}', [entry.period]),
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -290,8 +316,8 @@ class _StaleBanner extends StatelessWidget {
           Expanded(
             child: Text(
               lastUpdated == null
-                  ? 'מציג נתונים אחרונים — אין חיבור לאינטרנט'
-                  : 'מציג נתונים אחרונים מ-${_relative(lastUpdated!)}',
+                  ? tr(context, 'מציג נתונים אחרונים — אין חיבור לאינטרנט')
+                  : 'Last updated ${_relative(context, lastUpdated!)}',
               style: const TextStyle(fontSize: 12, color: Color(0xFFB45309)),
             ),
           ),
@@ -300,11 +326,16 @@ class _StaleBanner extends StatelessWidget {
     );
   }
 
-  static String _relative(DateTime when) {
+  static String _relative(BuildContext context, DateTime when) {
     final diff = DateTime.now().difference(when);
-    if (diff.inMinutes < 1) return 'עכשיו';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} דקות';
-    if (diff.inHours < 24) return '${diff.inHours} שעות';
-    return '${diff.inDays} ימים';
+    final isEn = Localizations.localeOf(context).languageCode == 'en';
+    if (diff.inMinutes < 1) return isEn ? 'just now' : 'עכשיו';
+    if (diff.inMinutes < 60) {
+      return isEn ? '${diff.inMinutes} min ago' : '${diff.inMinutes} דקות';
+    }
+    if (diff.inHours < 24) {
+      return isEn ? '${diff.inHours} h ago' : '${diff.inHours} שעות';
+    }
+    return isEn ? '${diff.inDays} d ago' : '${diff.inDays} ימים';
   }
 }

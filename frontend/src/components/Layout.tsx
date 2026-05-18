@@ -207,6 +207,18 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
           </Box>
         </Box>
 
+        <Typography
+          sx={{
+            color: 'grey.400',
+            fontSize: 10,
+            letterSpacing: 0,
+            textAlign: 'center',
+            mb: 1,
+          }}
+        >
+          build {__BUILD_TIMESTAMP__}
+        </Typography>
+
         <Box sx={{ display: 'flex', gap: 0.75 }}>
           <Button
             fullWidth
