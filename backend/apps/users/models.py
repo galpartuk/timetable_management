@@ -17,6 +17,26 @@ class UserProfile(models.Model):
     role = models.CharField(max_length=12, choices=Role.choices, default=Role.EDITOR)
     phone = models.CharField(max_length=20, unique=True, null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True, default='')
+    # Mobile app needs to know which Teacher / SchoolClass the logged-in
+    # user represents. The web app uses role-based permissions only, so
+    # these fields stay null for admins who aren't teaching. The importer
+    # auto-links by email match (see migration data step).
+    teacher = models.ForeignKey(
+        'subjects.Teacher',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='user_profile',
+        verbose_name='מורה משויך',
+    )
+    school_class = models.ForeignKey(
+        'school.SchoolClass',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='user_profiles',
+        verbose_name='כיתה משויכת',
+    )
 
     class Meta:
         verbose_name = 'פרופיל משתמש'

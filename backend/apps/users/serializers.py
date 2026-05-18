@@ -5,9 +5,29 @@ from .models import AuditActivity, AuditLogin, UserProfile
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    # Mobile app reads these to know which Teacher / SchoolClass the
+    # logged-in user represents and which by-teacher/{tid}/ to call.
+    teacher_id = serializers.IntegerField(read_only=True, allow_null=True)
+    school_class_id = serializers.IntegerField(read_only=True, allow_null=True)
+    teacher_name = serializers.SerializerMethodField()
+    school_class_name = serializers.SerializerMethodField()
+
     class Meta:
         model = UserProfile
-        fields = ['role', 'phone', 'full_name']
+        fields = [
+            'role', 'phone', 'full_name',
+            'teacher_id', 'school_class_id',
+            'teacher_name', 'school_class_name',
+        ]
+
+    def get_teacher_name(self, obj):
+        return str(obj.teacher) if obj.teacher_id else None
+
+    def get_school_class_name(self, obj):
+        if obj.school_class_id:
+            cls = obj.school_class
+            return cls.display_name if cls else None
+        return None
 
 
 class UserSerializer(serializers.ModelSerializer):
