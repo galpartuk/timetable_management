@@ -1,0 +1,92 @@
+workflows:
+  ios-release:
+    name: iOS — TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        API_BASE_URL: 'https://timetable.all-good.co.il'
+        # OAuth client IDs — set in Codemagic env vars before first build.
+        GOOGLE_CLIENT_ID_IOS: $GOOGLE_CLIENT_ID_IOS
+        BUNDLE_ID: 'co.all-good.timetable'
+      ios_signing:
+        # App Store Connect API key — upload to Codemagic env vars first.
+        distribution_type: app_store
+        bundle_identifier: $BUNDLE_ID
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'mobile-v*'
+    scripts:
+      - name: Get Flutter packages
+        script: cd mobile && flutter pub get
+      - name: Test
+        script: cd mobile && flutter test
+      - name: Set version from tag
+        script: |
+          cd mobile
+          # Strip the "mobile-v" prefix; build number = CI build counter.
+          VERSION="${CM_TAG#mobile-v}"
+          echo "version: $VERSION+$BUILD_NUMBER" >> pubspec.yaml
+      - name: Install pods
+        script: cd mobile/ios && pod install
+      - name: Build IPA
+        script: |
+          cd mobile && flutter build ipa --release \
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=GOOGLE_CLIENT_ID_IOS=$GOOGLE_CLIENT_ID_IOS
+    artifacts:
+      - mobile/build/ios/ipa/*.ipa
+      - mobile/build/ios/xcarchive
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - Internal
+
+  android-release:
+    name: Android — Play Internal
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      java: 17
+      vars:
+        API_BASE_URL: 'https://timetable.all-good.co.il'
+        GOOGLE_CLIENT_ID_ANDROID: $GOOGLE_CLIENT_ID_ANDROID
+        PACKAGE_NAME: 'co.all_good.timetable'
+      android_signing:
+        # Upload keystore (.jks) + passwords to Codemagic env vars first.
+        - keystore_reference
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'mobile-v*'
+    scripts:
+      - name: Get Flutter packages
+        script: cd mobile && flutter pub get
+      - name: Test
+        script: cd mobile && flutter test
+      - name: Set version
+        script: |
+          cd mobile
+          VERSION="${CM_TAG#mobile-v}"
+          echo "version: $VERSION+$BUILD_NUMBER" >> pubspec.yaml
+      - name: Build app bundle
+        script: |
+          cd mobile && flutter build appbundle --release \
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=GOOGLE_CLIENT_ID_ANDROID=$GOOGLE_CLIENT_ID_ANDROID
+    artifacts:
+      - mobile/build/app/outputs/bundle/release/*.aab
+    publishing:
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: internal
+        submit_as_draft: false

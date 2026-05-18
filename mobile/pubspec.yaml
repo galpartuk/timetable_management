@@ -1,0 +1,66 @@
+name: mobile
+description: "מערכת שעות — אפליקציה למורים, תלמידים ומנהלים"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.5.0
+  flutter: ^3.24.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # HTTP + auth
+  dio: ^5.7.0
+  flutter_secure_storage: ^9.2.4
+
+  # Offline storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Auth providers
+  google_sign_in: ^6.2.2
+
+  # Fonts + i18n
+  google_fonts: ^6.2.1
+  intl: ^0.20.2
+
+  # JSON + models
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+  # Code generation. We skip hive_generator (Hive type adapters) and
+  # store cached objects as JSON strings — keeps the dep tree resolvable
+  # against the latest analyzer that riverpod_lint requires.
+  build_runner: ^2.4.13
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.3
+  custom_lint: ^0.7.0
+  riverpod_lint: ^2.6.3
+
+  # Testing
+  mocktail: ^1.0.4
+  http_mock_adapter: ^0.6.1
+
+flutter:
+  uses-material-design: true
+  generate: true   # enables flutter gen-l10n
