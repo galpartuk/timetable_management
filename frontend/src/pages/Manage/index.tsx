@@ -42,6 +42,7 @@ const SHEETS: SheetMeta[] = [
   { key: 'assignments', label: 'שיבוצי הוראה', description: 'מי מלמד מה למי וכמה שעות', group: 'master' },
   { key: 'constraints', label: 'אילוצים', description: 'אילוצים מוגדרים: סוג, עדיפות, פרמטרים', group: 'master' },
   { key: 'import_logs', label: 'יומן ייבואים', description: '200 הייבואים האחרונים', group: 'master' },
+  { key: 'roundtrip_haarachot', label: 'הערכות (פורמט מקורי)', description: 'ייצוא חזרה לפורמט הקלט — תפקידים + גיליון לכל מקצוע', group: 'master' },
 
   { key: 'users', label: 'משתמשים', description: 'כל המשתמשים, תפקידים, התחברות אחרונה (super_admin)', group: 'admin' },
   { key: 'audit_logins', label: 'יומן התחברויות', description: '1000 התחברויות אחרונות (super_admin)', group: 'admin' },

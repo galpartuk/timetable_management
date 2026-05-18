@@ -121,6 +121,92 @@ class TimetableViewSet(viewsets.ModelViewSet):
             })
         return Response({'comparisons': results})
 
+    @action(detail=True, methods=['post'], url_path='move-entry')
+    def move_entry(self, request, pk=None):
+        """Move a TimetableEntry to a new time_slot.
+
+        Body: {entry_id, new_day, new_period}
+        Validates no conflicts (no teacher/class clash at the target slot).
+        On conflict returns 409 with the conflicting entry's details.
+        """
+        timetable = self.get_object()
+        entry_id = request.data.get('entry_id')
+        new_day = request.data.get('new_day')
+        new_period = request.data.get('new_period')
+        if entry_id is None or new_day is None or new_period is None:
+            return Response(
+                {'error': 'pass entry_id, new_day, new_period'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        entry = TimetableEntry.objects.filter(id=entry_id, timetable=timetable).first()
+        if not entry:
+            return Response({'error': 'entry not found'}, status=status.HTTP_404_NOT_FOUND)
+        from apps.school.models import TimeSlot
+        new_slot = TimeSlot.objects.filter(
+            school=timetable.school, day=new_day, period=new_period,
+        ).first()
+        if not new_slot:
+            return Response({'error': 'no such time slot'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Conflict check: is the same teacher OR same class already booked
+        # at the target slot in this timetable?
+        teacher_conflict = TimetableEntry.objects.filter(
+            timetable=timetable, time_slot=new_slot, teacher=entry.teacher,
+        ).exclude(id=entry.id).first()
+        if teacher_conflict:
+            return Response({
+                'error': f'מורה {entry.teacher} כבר משובץ בשעה זו (כיתה {teacher_conflict.school_class.display_name})',
+                'conflict_entry_id': teacher_conflict.id,
+            }, status=status.HTTP_409_CONFLICT)
+        class_conflict = TimetableEntry.objects.filter(
+            timetable=timetable, time_slot=new_slot, school_class=entry.school_class,
+        ).exclude(id=entry.id).first()
+        if class_conflict and class_conflict.teacher_id != entry.teacher_id:
+            # Different teacher means a real conflict (parallel-track entries
+            # for the same class are fine, but only when the same teacher
+            # group is involved).
+            return Response({
+                'error': f'כיתה {entry.school_class.display_name} כבר משובצת בשעה זו ({class_conflict.subject.name_he})',
+                'conflict_entry_id': class_conflict.id,
+            }, status=status.HTTP_409_CONFLICT)
+
+        entry.time_slot = new_slot
+        entry.save(update_fields=['time_slot'])
+        return Response(TimetableEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'], url_path='swap-entries')
+    def swap_entries(self, request, pk=None):
+        """Swap the time_slots of two entries."""
+        timetable = self.get_object()
+        a = request.data.get('entry_a')
+        b = request.data.get('entry_b')
+        if a is None or b is None:
+            return Response({'error': 'pass entry_a and entry_b'}, status=status.HTTP_400_BAD_REQUEST)
+        ea = TimetableEntry.objects.filter(id=a, timetable=timetable).first()
+        eb = TimetableEntry.objects.filter(id=b, timetable=timetable).first()
+        if not ea or not eb:
+            return Response({'error': 'entry not found'}, status=status.HTTP_404_NOT_FOUND)
+        ea.time_slot, eb.time_slot = eb.time_slot, ea.time_slot
+        ea.save(update_fields=['time_slot'])
+        eb.save(update_fields=['time_slot'])
+        return Response({
+            'a': TimetableEntrySerializer(ea).data,
+            'b': TimetableEntrySerializer(eb).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='toggle-lock')
+    def toggle_lock(self, request, pk=None):
+        """Toggle the locked flag on a TimetableEntry — pinned entries
+        stay put when the solver runs again."""
+        timetable = self.get_object()
+        entry_id = request.data.get('entry_id')
+        entry = TimetableEntry.objects.filter(id=entry_id, timetable=timetable).first()
+        if not entry:
+            return Response({'error': 'entry not found'}, status=status.HTTP_404_NOT_FOUND)
+        entry.locked = not entry.locked
+        entry.save(update_fields=['locked'])
+        return Response({'id': entry.id, 'locked': entry.locked})
+
     @action(detail=True, methods=['get'])
     def quality(self, request, pk=None):
         """Quality metrics for the generated timetable.

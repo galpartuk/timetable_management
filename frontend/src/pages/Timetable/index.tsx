@@ -12,7 +12,8 @@ import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
-  getTimetableQuality, type TimetableQuality,
+  getTimetableQuality, moveTimetableEntry, toggleEntryLock,
+  type TimetableQuality,
 } from '../../api/client';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
@@ -274,7 +275,19 @@ export default function TimetablePage() {
         <Box sx={{ display: 'flex', gap: 2.5, flexDirection: { xs: 'column', lg: 'row' } }}>
           <Card sx={{ flex: 1, minWidth: 0 }}>
             <CardContent sx={{ p: { xs: 1.5, md: 2.5 }, overflowX: 'auto' }}>
-              <TimetableGrid grid={grid} viewMode={viewMode} entries={entries} />
+              <TimetableGrid
+                grid={grid}
+                viewMode={viewMode}
+                entries={entries}
+                timetableId={selectedTT.id}
+                onChange={() => {
+                  // Reload entries after a drag/drop or lock change.
+                  const fetcher = viewMode === 'class' ? getTimetableByClass : getTimetableByTeacher;
+                  fetcher(selectedTT.id, selectedId as number)
+                    .then((r) => setEntries(r.data))
+                    .catch(() => {});
+                }}
+              />
             </CardContent>
           </Card>
           {selectedQuality && (
@@ -341,10 +354,14 @@ function TimetableGrid({
   grid,
   viewMode,
   entries,
+  timetableId,
+  onChange,
 }: {
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
   entries: any[];
+  timetableId?: number;
+  onChange?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -385,6 +402,8 @@ function TimetableGrid({
           grid={grid}
           viewMode={viewMode}
           dayBounds={dayBounds}
+          timetableId={timetableId}
+          onChange={onChange}
         />
       ))}
     </Box>
@@ -396,11 +415,15 @@ function PeriodRow({
   grid,
   viewMode,
   dayBounds,
+  timetableId,
+  onChange,
 }: {
   period: number;
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
   dayBounds: Record<number, { min: number; max: number } | null>;
+  timetableId?: number;
+  onChange?: () => void;
 }) {
   return (
     <>
@@ -426,23 +449,69 @@ function PeriodRow({
         const bound = dayBounds[day];
         const isWindow =
           !entry && !!bound && period > bound.min && period < bound.max;
-        return <Cell key={dayIdx} entry={entry} viewMode={viewMode} isWindow={isWindow} />;
+        return (
+          <Cell
+            key={dayIdx}
+            entry={entry}
+            viewMode={viewMode}
+            isWindow={isWindow}
+            day={day}
+            period={period}
+            timetableId={timetableId}
+            onChange={onChange}
+          />
+        );
       })}
     </>
   );
 }
 
-function Cell({ entry, viewMode, isWindow }: { entry: any; viewMode: 'class' | 'teacher'; isWindow?: boolean }) {
+function Cell({
+  entry, viewMode, isWindow, day, period, timetableId, onChange,
+}: {
+  entry: any;
+  viewMode: 'class' | 'teacher';
+  isWindow?: boolean;
+  day?: number;
+  period?: number;
+  timetableId?: number;
+  onChange?: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!timetableId || !day || !period) return;
+    e.preventDefault();
+    setDragOver(true);
+  };
+  const handleDragLeave = () => setDragOver(false);
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!timetableId || !day || !period) return;
+    const entryId = Number(e.dataTransfer.getData('entry_id'));
+    if (!entryId) return;
+    try {
+      await moveTimetableEntry(timetableId, entryId, day, period);
+      onChange?.();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'הזזה נכשלה');
+    }
+  };
+
   if (!entry) {
     if (isWindow) {
       return (
         <Box
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           sx={{
             minHeight: 76,
             borderRadius: 2,
-            border: '1px dashed',
-            borderColor: '#f59e0b',
-            background: 'rgba(245, 158, 11, 0.08)',
+            border: dragOver ? '2px solid' : '1px dashed',
+            borderColor: dragOver ? 'primary.main' : '#f59e0b',
+            background: dragOver ? 'rgba(79,70,229,0.08)' : 'rgba(245, 158, 11, 0.08)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -457,12 +526,15 @@ function Cell({ entry, viewMode, isWindow }: { entry: any; viewMode: 'class' | '
     }
     return (
       <Box
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         sx={{
           minHeight: 76,
           borderRadius: 2,
-          border: '1px dashed',
-          borderColor: 'grey.200',
-          background: 'transparent',
+          border: dragOver ? '2px solid' : '1px dashed',
+          borderColor: dragOver ? 'primary.main' : 'grey.200',
+          background: dragOver ? 'rgba(79,70,229,0.08)' : 'transparent',
         }}
       />
     );
@@ -470,26 +542,61 @@ function Cell({ entry, viewMode, isWindow }: { entry: any; viewMode: 'class' | '
 
   const color = entry.subject_color || '#6366f1';
   const subText = viewMode === 'class' ? entry.teacher_name : entry.class_name;
+  const isLocked = entry.locked;
+  const canDrag = !!timetableId && !isLocked;
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('entry_id', String(entry.id));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDblClick = async () => {
+    if (!timetableId) return;
+    try {
+      await toggleEntryLock(timetableId, entry.id);
+      onChange?.();
+    } catch { /* swallow */ }
+  };
 
   return (
     <Box
+      draggable={canDrag}
+      onDragStart={canDrag ? handleDragStart : undefined}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onDoubleClick={handleDblClick}
+      title={isLocked ? 'נעול — לחיצה כפולה לפתיחה' : 'גרירה להזזה · לחיצה כפולה לנעילה'}
       sx={{
         minHeight: 76,
         borderRadius: 2,
         position: 'relative',
-        background: `${color}10`,
-        border: `1px solid ${color}30`,
+        background: dragOver ? 'rgba(79,70,229,0.10)' : `${color}10`,
+        border: dragOver
+          ? '2px solid rgba(79,70,229,0.6)'
+          : isLocked
+          ? `2px solid ${color}90`
+          : `1px solid ${color}30`,
         overflow: 'hidden',
         padding: '10px 12px',
-        cursor: 'default',
+        cursor: canDrag ? 'grab' : 'default',
         transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms',
         '&:hover': {
-          transform: 'translateY(-1px)',
-          boxShadow: `0 6px 14px -6px ${color}60`,
+          transform: canDrag ? 'translateY(-1px)' : 'none',
+          boxShadow: canDrag ? `0 6px 14px -6px ${color}60` : 'none',
           background: `${color}18`,
+        },
+        '&:active': {
+          cursor: canDrag ? 'grabbing' : 'default',
         },
       }}
     >
+      {isLocked && (
+        <Box sx={{
+          position: 'absolute', top: 4, insetInlineEnd: 4,
+          fontSize: 10, opacity: 0.7,
+        }}>🔒</Box>
+      )}
       <Box
         sx={{
           position: 'absolute',

@@ -176,6 +176,18 @@ body {
   font-feature-settings: 'tnum';
 }
 
+/* Mobile-friendly page titles — keep them readable on phones without
+   shrinking everything else. The grid keeps horizontal scroll via the
+   parent's overflow:auto; cells stay at full readable size. */
+@media (max-width: 640px) {
+  .MuiTypography-h2 {
+    font-size: 1.35rem !important;
+  }
+  .MuiTypography-h3 {
+    font-size: 1.15rem !important;
+  }
+}
+
 /* Print-friendly layout. The browser's native Print dialog reformats
    the page using these rules so the timetable fits A4 cleanly:
    - Hide chrome (sidebar, header, action buttons, ai-assistant)

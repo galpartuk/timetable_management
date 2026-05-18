@@ -189,6 +189,43 @@ export interface TimetableQuality {
 export const getTimetableQuality = (timetableId: number) =>
   api.get<TimetableQuality>(`/timetables/${timetableId}/quality/`);
 
+export const moveTimetableEntry = (
+  timetableId: number,
+  entryId: number,
+  new_day: number,
+  new_period: number,
+) =>
+  api.post(`/timetables/${timetableId}/move-entry/`, {
+    entry_id: entryId, new_day, new_period,
+  });
+
+export const swapTimetableEntries = (
+  timetableId: number, entry_a: number, entry_b: number,
+) => api.post(`/timetables/${timetableId}/swap-entries/`, { entry_a, entry_b });
+
+export const toggleEntryLock = (timetableId: number, entryId: number) =>
+  api.post(`/timetables/${timetableId}/toggle-lock/`, { entry_id: entryId });
+
+export interface TimetableComparison {
+  comparisons: Array<{
+    id: number;
+    name: string;
+    status: string;
+    academic_year: string;
+    entries: number;
+    teacher_windows: number;
+    long_windows: number;
+    class_windows: number;
+    late_period_lessons: number;
+    solver_log: string;
+  }>;
+}
+
+export const compareTimetables = (ids: number[]) =>
+  api.get<TimetableComparison>('/timetables/compare/', {
+    params: { ids: ids.join(',') },
+  });
+
 // Import
 export interface ImportPreview {
   sheets_seen: string[];
