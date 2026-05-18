@@ -29,10 +29,20 @@ export const googleLogin = (credential: string) =>
   api.post('/auth/google/', { credential });
 
 export const requestOtp = (phone: string) =>
-  api.post('/auth/request-otp/', { phone });
+  api.post<{ success: boolean; user_id: number; otp_id: number; message: string }>(
+    '/auth/request-otp/', { phone },
+  );
 
 export const verifyOtp = (userId: number, code: string) =>
   api.post('/auth/verify-otp/', { user_id: userId, code });
+
+/// Polled by the FE after request-otp. Returns either:
+///   { status: 'pending' | 'expired' | 'used' | 'not_found' }
+///   { status: 'verified', ...UserPayload, token: '…' }
+export const otpStatus = (userId: number, otpId: number) =>
+  api.post<Record<string, unknown> & { status: string }>(
+    '/auth/otp-status/', { user_id: userId, otp_id: otpId },
+  );
 
 export const logout = () => api.post('/auth/logout/');
 

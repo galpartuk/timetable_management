@@ -11,7 +11,7 @@ import {
   Phone as PhoneIcon, Google as GoogleIcon, Lock as LockIcon,
   ArrowBack as BackIcon,
 } from '@mui/icons-material';
-import { googleLogin, login, requestOtp, verifyOtp } from '../../api/client';
+import { googleLogin, login, requestOtp, verifyOtp, otpStatus } from '../../api/client';
 import { GOOGLE_CLIENT_ID } from '../../utils/constants';
 
 declare global {
@@ -54,7 +54,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [phone, setPhone] = useState('');
   const [phoneStep, setPhoneStep] = useState<PhoneStep>('input');
   const [otpUserId, setOtpUserId] = useState<number | null>(null);
+  const [otpId, setOtpId] = useState<number | null>(null);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
+  const [showManualEntry, setShowManualEntry] = useState(false);
 
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -122,9 +124,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       const data = res.data;
       if (data.success) {
         setOtpUserId(data.user_id);
+        setOtpId(data.otp_id);
         setPhoneStep('otp');
         setOtpDigits(['', '', '', '', '', '']);
-        setTimeout(() => otpRefs.current[0]?.focus(), 50);
+        setShowManualEntry(false);
       } else {
         setError(data.message || t('login.callFailed'));
       }
@@ -134,6 +137,36 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       setLoading(false);
     }
   };
+
+  // Poll otp-status every 1.5s while waiting for the user to press 1.
+  // Stops once the OTP is verified, expired, or the user leaves the step.
+  useEffect(() => {
+    if (phoneStep !== 'otp' || otpUserId == null || otpId == null) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const res = await otpStatus(otpUserId, otpId);
+        const data = res.data as any;
+        if (cancelled) return;
+        if (data.status === 'verified') {
+          onLogin(data);
+        } else if (data.status === 'expired' || data.status === 'used') {
+          setError(isRtl ? 'התוקף פג. נסה שוב.' : 'OTP expired, please try again.');
+          setPhoneStep('input');
+        }
+      } catch {
+        // Network blip — retry on the next tick.
+      }
+    };
+    const id = setInterval(tick, 1500);
+    tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phoneStep, otpUserId, otpId]);
 
   const handleVerifyOtp = async (codeOverride?: string) => {
     if (otpUserId === null) return;
@@ -391,69 +424,102 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             </Stack>
           )}
 
-          {/* Phone — OTP step */}
+          {/* Phone — OTP step (press-1 DTMF flow with manual fallback) */}
           {tab === 'phone' && phoneStep === 'otp' && (
             <Stack spacing={2.5} sx={{ alignItems: 'center' }}>
               <Box
                 sx={{
-                  width: 56, height: 56, borderRadius: '50%',
+                  width: 72, height: 72, borderRadius: '50%',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'linear-gradient(135deg, rgba(79,70,229,0.10), rgba(99,102,241,0.04))',
+                  background: 'linear-gradient(135deg, rgba(79,70,229,0.16), rgba(99,102,241,0.06))',
                   border: '1px solid', borderColor: 'primary.light',
                   color: 'primary.main',
+                  position: 'relative',
                 }}
               >
-                <PhoneIcon />
+                <PhoneIcon sx={{ fontSize: 32 }} />
+                <CircularProgress
+                  size={88}
+                  thickness={2}
+                  sx={{
+                    position: 'absolute',
+                    color: 'primary.main',
+                    opacity: 0.4,
+                  }}
+                />
               </Box>
-              <Typography sx={{ fontSize: 14, color: 'grey.600', textAlign: 'center', maxWidth: 320 }}>
-                {t('login.otpInstructions')}
+              <Typography sx={{ fontSize: 17, fontWeight: 700, textAlign: 'center', maxWidth: 320 }}>
+                {isRtl ? 'מצלצלים אליך כעת' : 'Calling you now'}
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }} dir="ltr">
-                {otpDigits.map((d, i) => (
-                  <Box
-                    key={i}
-                    component="input"
-                    value={d}
-                    onChange={(e: any) => handleOtpChange(i, e.target.value)}
-                    onKeyDown={(e: any) => handleOtpKeyDown(i, e)}
-                    disabled={loading}
-                    ref={(el: HTMLInputElement | null) => { otpRefs.current[i] = el; }}
-                    inputMode="numeric"
-                    maxLength={1}
-                    sx={{
-                      width: 44,
-                      height: 52,
-                      textAlign: 'center',
-                      fontSize: 24,
-                      fontWeight: 700,
-                      fontFamily: 'inherit',
-                      border: '1px solid',
-                      borderColor: d ? 'primary.main' : 'divider',
-                      borderRadius: 2,
-                      background: d ? 'rgba(79,70,229,0.04)' : '#fff',
-                      color: 'text.primary',
-                      transition: 'all 160ms cubic-bezier(0.22, 1, 0.36, 1)',
-                      outline: 'none',
-                      '&:focus': {
-                        borderColor: 'primary.main',
-                        boxShadow: '0 0 0 4px rgba(79,70,229,0.14)',
-                      },
-                      '&:disabled': { opacity: 0.6 },
-                    }}
-                  />
-                ))}
-              </Box>
-              <Button
-                fullWidth
-                variant="contained"
-                size="large"
-                disabled={loading || otpDigits.some((d) => !d)}
-                onClick={() => handleVerifyOtp()}
-                startIcon={loading ? <CircularProgress size={18} color="inherit" /> : null}
-                sx={{ py: 1.4, fontSize: 15 }}
-              >
-                {t('login.verify')}
-              </Button>
+              <Typography sx={{ fontSize: 14, color: 'grey.600', textAlign: 'center', maxWidth: 320 }}>
+                {isRtl
+                  ? 'ענה לשיחה ולחץ 1 כדי לאשר את ההתחברות. המסך יתעדכן אוטומטית.'
+                  : 'Answer the call and press 1 to confirm. The screen will update automatically.'}
+              </Typography>
+              {!showManualEntry && (
+                <Link
+                  component="button"
+                  variant="caption"
+                  onClick={() => {
+                    setShowManualEntry(true);
+                    setTimeout(() => otpRefs.current[0]?.focus(), 50);
+                  }}
+                  disabled={loading}
+                  sx={{ color: 'grey.600' }}
+                >
+                  {isRtl ? 'אני מעדיף להקליד קוד' : 'I prefer to type the code'}
+                </Link>
+              )}
+              {showManualEntry && (
+                <>
+                  <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }} dir="ltr">
+                    {otpDigits.map((d, i) => (
+                      <Box
+                        key={i}
+                        component="input"
+                        value={d}
+                        onChange={(e: any) => handleOtpChange(i, e.target.value)}
+                        onKeyDown={(e: any) => handleOtpKeyDown(i, e)}
+                        disabled={loading}
+                        ref={(el: HTMLInputElement | null) => { otpRefs.current[i] = el; }}
+                        inputMode="numeric"
+                        maxLength={1}
+                        sx={{
+                          width: 44,
+                          height: 52,
+                          textAlign: 'center',
+                          fontSize: 24,
+                          fontWeight: 700,
+                          fontFamily: 'inherit',
+                          border: '1px solid',
+                          borderColor: d ? 'primary.main' : 'divider',
+                          borderRadius: 2,
+                          background: d ? 'rgba(79,70,229,0.04)' : '#fff',
+                          color: 'text.primary',
+                          transition: 'all 160ms cubic-bezier(0.22, 1, 0.36, 1)',
+                          outline: 'none',
+                          '&:focus': {
+                            borderColor: 'primary.main',
+                            boxShadow: '0 0 0 4px rgba(79,70,229,0.14)',
+                          },
+                          '&:disabled': { opacity: 0.6 },
+                        }}
+                      />
+                    ))}
+                  </Box>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    size="large"
+                    disabled={loading || otpDigits.some((d) => !d)}
+                    onClick={() => handleVerifyOtp()}
+                    startIcon={loading ? <CircularProgress size={18} color="inherit" /> : null}
+                    sx={{ py: 1.4, fontSize: 15 }}
+                  >
+                    {t('login.verify')}
+                  </Button>
+                </>
+              )}
               <Link
                 component="button"
                 variant="caption"

@@ -8,7 +8,9 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from .models import AuditActivity, AuditLogin, UserProfile
+from django.utils import timezone
+
+from .models import AuditActivity, AuditLogin, OtpCode, UserProfile
 
 
 def _login_response(user):
@@ -116,14 +118,81 @@ def request_otp_view(request):
         return Response({'error': 'מספר טלפון אינו רשום במערכת'},
                         status=status.HTTP_404_NOT_FOUND)
 
-    code = generate_otp(profile.user)
+    otp = generate_otp(profile.user)
     name = profile.full_name or profile.user.get_full_name() or 'משתמש'
-    call = make_otp_call(profile.phone, name, code)
+    call = make_otp_call(profile.phone, name, otp.code, dtmf_token=otp.dtmf_token)
     return Response({
         'success': bool(call.get('success')),
         'user_id': profile.user_id,
+        'otp_id': otp.id,
         'message': 'שיחה יזומה' if call.get('success') else 'השיחה נכשלה',
     })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def otp_dtmf_callback_view(request, token: str):
+    """Public callback fired by Asterisk when the user presses 1 on the
+    OTP call. Marks the matching OTP as `dtmf_verified=True`. The
+    frontend, polling otp-status, picks up the flip and completes the
+    login on its next tick."""
+    otp = (
+        OtpCode.objects
+        .filter(
+            dtmf_token=token,
+            used=False,
+            expires_at__gt=timezone.now(),
+        )
+        .order_by('-created_at')
+        .first()
+    )
+    if otp is None:
+        return Response({'error': 'invalid or expired token'},
+                        status=status.HTTP_404_NOT_FOUND)
+    otp.dtmf_verified = True
+    otp.save(update_fields=['dtmf_verified'])
+    return Response({'success': True})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def otp_status_view(request):
+    """Polled by the frontend after request-otp. Returns status:
+      - 'pending'  — call placed, user hasn't pressed 1 yet
+      - 'verified' — user pressed 1; response also includes the user
+        payload + token, the session is established, login is done.
+      - 'expired'  — past expiry
+      - 'used'     — already consumed (treat as expired client-side)
+    """
+    user_id = request.data.get('user_id')
+    otp_id = request.data.get('otp_id')
+    if not user_id or not otp_id:
+        return Response({'error': 'user_id and otp_id required'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    otp = OtpCode.objects.filter(id=otp_id, user_id=user_id).first()
+    if otp is None:
+        return Response({'status': 'not_found'},
+                        status=status.HTTP_404_NOT_FOUND)
+    if otp.expires_at <= timezone.now():
+        return Response({'status': 'expired'})
+    if otp.used:
+        return Response({'status': 'used'})
+    if not otp.dtmf_verified:
+        return Response({'status': 'pending'})
+
+    # Verified — complete the login.
+    user = User.objects.filter(id=otp.user_id).first()
+    if user is None or not user.is_active:
+        return Response({'status': 'expired'})
+    otp.used = True
+    otp.save(update_fields=['used'])
+    login(request, user)
+    audit.log_login(request=request, method='phone', success=True, user=user)
+    token, _ = Token.objects.get_or_create(user=user)
+    data = UserSerializer(user).data
+    data['token'] = token.key
+    data['status'] = 'verified'
+    return Response(data)
 
 
 @api_view(['POST'])

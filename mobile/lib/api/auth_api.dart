@@ -32,8 +32,9 @@ class AuthApi {
     return _resultFrom(res);
   }
 
-  /// Triggers the IVR OTP call. Returns (success, userId).
-  Future<({bool success, int? userId, String message})> requestOtp(String phone) async {
+  /// Triggers the IVR OTP call. Returns the (success, userId, otpId) tuple.
+  /// otpId is needed to poll otp-status for the press-1 confirmation.
+  Future<({bool success, int? userId, int? otpId, String message})> requestOtp(String phone) async {
     final res = await _client.request(() => _client.raw.post(
           '/api/auth/request-otp/',
           data: {'phone': phone},
@@ -42,6 +43,7 @@ class AuthApi {
     return (
       success: (data['success'] ?? false) as bool,
       userId: data['user_id'] as int?,
+      otpId: data['otp_id'] as int?,
       message: (data['message'] ?? '') as String,
     );
   }
@@ -52,6 +54,24 @@ class AuthApi {
           data: {'user_id': userId, 'code': code},
         ));
     return _resultFrom(res);
+  }
+
+  /// Polls the backend after request-otp. Returns one of:
+  ///   - ('pending', null) — user hasn't pressed 1 yet
+  ///   - ('verified', LoginResult) — login complete; LoginResult has user + token
+  ///   - ('expired', null) — past TTL
+  ///   - ('used', null) — already consumed
+  Future<({String status, LoginResult? result})> otpStatus(int userId, int otpId) async {
+    final res = await _client.request(() => _client.raw.post(
+          '/api/auth/otp-status/',
+          data: {'user_id': userId, 'otp_id': otpId},
+        ));
+    final data = res.data as Map<String, dynamic>;
+    final status = (data['status'] ?? 'pending') as String;
+    if (status == 'verified') {
+      return (status: status, result: _resultFrom(res));
+    }
+    return (status: status, result: null);
   }
 
   Future<AppUser> me() async {

@@ -64,6 +64,13 @@ class OtpCode(models.Model):
     used = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # DTMF press-1 confirmation flow: a one-time token included in the
+    # outbound call's DTMF_CALLBACK_URL. When the user presses 1, the
+    # Asterisk dialplan hits /api/auth/otp-dtmf-callback/<token>/ and we
+    # set dtmf_verified=True. The frontend polls otp-status/ to detect
+    # the flip and finishes the login without the user typing anything.
+    dtmf_token = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    dtmf_verified = models.BooleanField(default=False)
 
     class Meta:
         indexes = [models.Index(fields=['user', 'used', 'expires_at'])]

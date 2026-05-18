@@ -134,11 +134,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<({bool success, int? userId, String message})> requestOtp(String phone) async {
+  Future<({bool success, int? userId, int? otpId, String message})> requestOtp(String phone) async {
     try {
       return await _apiFactory().requestOtp(phone);
     } on Failure catch (f) {
-      return (success: false, userId: null, message: f.message);
+      return (success: false, userId: null, otpId: null, message: f.message);
     }
   }
 
@@ -150,6 +150,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState.authed(user: r.user, token: r.token);
     } on Failure catch (f) {
       state = AuthState.unauthenticated(error: f.message);
+    }
+  }
+
+  /// Poll once for the press-1 status. Returns 'pending' / 'verified' /
+  /// 'expired' / 'used' / 'not_found'. On 'verified' the user is
+  /// already logged in (state flipped to AuthAuthed).
+  Future<String> pollOtpStatus(int userId, int otpId) async {
+    try {
+      final r = await _apiFactory().otpStatus(userId, otpId);
+      if (r.status == 'verified' && r.result != null) {
+        await _persist(r.result!.token, r.result!.user);
+        state = AuthState.authed(user: r.result!.user, token: r.result!.token);
+      }
+      return r.status;
+    } on Failure {
+      return 'pending'; // treat network blips as still-waiting
     }
   }
 
