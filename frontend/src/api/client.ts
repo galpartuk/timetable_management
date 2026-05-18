@@ -136,7 +136,12 @@ export interface TeacherQualityRow {
   late_period_lessons: number;
   distinct_subjects: number;
   distinct_classes: number;
+  bagrut_hours: number;
   role_hours: number;
+  stipend_fraction: number;
+  total_contract_hours: number;
+  cap: number;
+  utilization_pct: number;
   has_day_off: boolean;
   day_off: number | null;
   windows_by_day: Record<string, number>;

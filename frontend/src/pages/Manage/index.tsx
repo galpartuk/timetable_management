@@ -957,7 +957,7 @@ type TeacherSortKey =
   | 'days_taught' | 'days_with_windows' | 'longest_teaching_day'
   | 'max_daily_lessons' | 'avg_daily_lessons' | 'late_period_lessons'
   | 'first_period_count' | 'distinct_subjects' | 'distinct_classes'
-  | 'role_hours';
+  | 'bagrut_hours' | 'role_hours' | 'total_contract_hours' | 'utilization_pct';
 
 function QualityTab() {
   const [timetables, setTimetables] = useState<any[]>([]);
@@ -1019,19 +1019,22 @@ function QualityTab() {
   const exportCsv = () => {
     if (!quality) return;
     const headers = [
-      'שם המורה', 'שיעורים', 'חלונות', 'חלונות ארוכים (4+)',
-      'מירב פער יחיד', 'ימי הוראה', 'ימים עם חלונות',
-      'יום הוראה ארוך ביותר', 'שיעורים יומיים מקסימום', 'שיעורים יומיים ממוצע',
-      'שיעורים אחרי 8', 'ימים מתחילים ב-1',
-      'מקצועות שונים', 'כיתות שונות', 'שעות תפקיד', 'יום חופש',
+      'שם המורה', 'שעות הוראה', 'שעות בגרות', 'שעות תפקיד',
+      'סך הכל שעות', 'מכסה', 'ניצול (%)',
+      'חלונות', 'חלונות ארוכים', 'פער מקס׳',
+      'ימי הוראה', 'ימים עם חלונות',
+      'יום הוראה ארוך', 'מקס׳ ליום', 'ממוצע ליום',
+      'שיעורים אחרי 8', 'ימים פותחים', 'מקצועות', 'כיתות', 'גמול תפקיד', 'יום חופש',
     ];
     const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
     const rows = sortedTeachers.map((t) => [
-      t.name, t.lessons, t.windows, t.long_windows,
-      t.max_single_gap, t.days_taught, t.days_with_windows,
+      t.name, t.lessons, t.bagrut_hours, t.role_hours,
+      t.total_contract_hours, t.cap, t.utilization_pct,
+      t.windows, t.long_windows, t.max_single_gap,
+      t.days_taught, t.days_with_windows,
       t.longest_teaching_day, t.max_daily_lessons, t.avg_daily_lessons,
       t.late_period_lessons, t.first_period_count,
-      t.distinct_subjects, t.distinct_classes, t.role_hours,
+      t.distinct_subjects, t.distinct_classes, t.stipend_fraction,
       t.day_off ? dayNames[t.day_off] : '',
     ]);
     const csv = '﻿' + [headers, ...rows]
@@ -1165,7 +1168,11 @@ function QualityTab() {
                       },
                     }}>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="name" onSort={onSort}>מורה</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>שיעורים</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>שעות הוראה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="bagrut_hours" onSort={onSort}>שעות בגרות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>שעות תפקיד</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="total_contract_hours" onSort={onSort}>סך הכל</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="utilization_pct" onSort={onSort}>ניצול %</SortableTh>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="windows" onSort={onSort}>חלונות</SortableTh>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="long_windows" onSort={onSort}>חלונות ארוכים</SortableTh>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_single_gap" onSort={onSort}>פער מקס׳</SortableTh>
@@ -1177,7 +1184,6 @@ function QualityTab() {
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="first_period_count" onSort={onSort}>פותח יום</SortableTh>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_subjects" onSort={onSort}>מקצועות</SortableTh>
                       <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_classes" onSort={onSort}>כיתות</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>שעות תפקיד</SortableTh>
                       <Box component="th">חופש</Box>
                     </Box>
                   </Box>
@@ -1278,6 +1284,16 @@ function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) 
   const longWinColor = t.long_windows === 0 ? 'success.dark' : 'error.dark';
   const longWinBg = t.long_windows === 0 ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.10)';
 
+  // Color the utilization cell by how close to cap it is.
+  const utilColor =
+    t.utilization_pct >= 100 ? 'error.dark'
+    : t.utilization_pct >= 90 ? '#b45309'
+    : t.utilization_pct >= 70 ? 'success.dark' : 'grey.700';
+  const utilBg =
+    t.utilization_pct >= 100 ? 'rgba(244,63,94,0.10)'
+    : t.utilization_pct >= 90 ? 'rgba(245,158,11,0.10)'
+    : t.utilization_pct >= 70 ? 'rgba(16,185,129,0.08)' : 'transparent';
+
   return (
     <Box component="tr" sx={{
       '& td': {
@@ -1290,6 +1306,14 @@ function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) 
         {t.name}
       </Box>
       <Box component="td">{t.lessons}</Box>
+      <Box component="td">{t.bagrut_hours || '—'}</Box>
+      <Box component="td">{t.role_hours || '—'}</Box>
+      <Box component="td" sx={{ fontWeight: 600 }}>{t.total_contract_hours}</Box>
+      <Box component="td">
+        <Chip size="small" label={`${t.utilization_pct}%`}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: utilBg, color: utilColor }} />
+      </Box>
       <Box component="td">
         <Chip size="small" label={t.windows}
               sx={{ height: 20, fontSize: 11, fontWeight: 700,
@@ -1309,7 +1333,6 @@ function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) 
       <Box component="td">{t.first_period_count}</Box>
       <Box component="td">{t.distinct_subjects}</Box>
       <Box component="td">{t.distinct_classes}</Box>
-      <Box component="td">{t.role_hours || '—'}</Box>
       <Box component="td">{t.day_off ? dayNames[t.day_off] : '—'}</Box>
     </Box>
   );

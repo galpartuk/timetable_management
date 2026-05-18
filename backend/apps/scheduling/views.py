@@ -92,10 +92,13 @@ class TimetableViewSet(viewsets.ModelViewSet):
             class_periods[e.school_class_id][e.time_slot.day].add(e.time_slot.period)
 
         # "Long window" threshold — gaps this size or larger are flagged.
-        # 4 periods at 45 min each ≈ 3 hours of sitting around, which is
-        # what teachers actually complain about. Adjust if the school
-        # uses a different period length.
-        LONG_WINDOW_THRESHOLD = 4
+        # Default 4 periods (≈ 3 hours), which is what teachers actually
+        # complain about: a gap that big means going home and coming back.
+        # Caller can override via ?long_threshold=N.
+        try:
+            LONG_WINDOW_THRESHOLD = max(2, int(request.query_params.get('long_threshold', '4')))
+        except (TypeError, ValueError):
+            LONG_WINDOW_THRESHOLD = 4
 
         def _day_gap_breakdown(periods: set[int]) -> tuple[list[int], int, int]:
             """Given a teacher's periods on one day, return:
@@ -127,11 +130,25 @@ class TimetableViewSet(viewsets.ModelViewSet):
         from apps.subjects.models import Teacher, Subject, TeacherRole
         from apps.school.models import SchoolClass
 
-        # Pre-fetch role hours per teacher (from תפקידים sheet).
+        # Pre-fetch role hours per teacher (from תפקידים sheet) plus the
+        # stipend fraction (גמול תפקיד) — both useful for the contract view.
         role_hours_by_teacher: dict[int, float] = defaultdict(float)
+        stipend_by_teacher: dict[int, float] = defaultdict(float)
         for role in TeacherRole.objects.filter(school=timetable.school).select_related('teacher'):
             if role.teacher_id:
                 role_hours_by_teacher[role.teacher_id] += float(role.weekly_hours or 0)
+                stipend_by_teacher[role.teacher_id] += float(role.stipend_fraction or 0)
+
+        # Pre-fetch bagrut-bonus hours per teacher — these are hours that
+        # count toward the contract above the actual lesson-hour count.
+        from apps.subjects.models import TeachingAssignment
+        bagrut_hours_by_teacher: dict[int, float] = defaultdict(float)
+        active_assignments_by_teacher: dict[int, list] = defaultdict(list)
+        for a in TeachingAssignment.objects.filter(
+            subject__school=timetable.school, is_active=True, teacher__isnull=False,
+        ).select_related('teacher'):
+            bagrut_hours_by_teacher[a.teacher_id] += float(a.bagrut_bonus_hours or 0)
+            active_assignments_by_teacher[a.teacher_id].append(a)
 
         # Pre-fetch all teachers and subjects in one query for speed.
         teachers_by_id = {t.id: t for t in Teacher.objects.filter(school=timetable.school)}
@@ -178,6 +195,13 @@ class TimetableViewSet(viewsets.ModelViewSet):
                     'long_window_count': day_long,
                 }
 
+            bagrut_h = round(bagrut_hours_by_teacher.get(tid, 0), 1)
+            role_h = round(role_hours_by_teacher.get(tid, 0), 1)
+            total_contract = total_lessons + bagrut_h + role_h
+            cap = t.max_weekly_hours or 0
+            utilization = (
+                round(total_contract / cap * 100, 0) if cap > 0 else 0
+            )
             teacher_stats.append({
                 'id': tid,
                 'name': str(t),
@@ -201,7 +225,12 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 'late_period_lessons': late_lessons,
                 'distinct_subjects': len(teacher_subjects.get(tid, set())),
                 'distinct_classes': len(teacher_classes.get(tid, set())),
-                'role_hours': round(role_hours_by_teacher.get(tid, 0), 1),
+                'bagrut_hours': bagrut_h,
+                'role_hours': role_h,
+                'stipend_fraction': round(stipend_by_teacher.get(tid, 0), 2),
+                'total_contract_hours': round(total_contract, 1),
+                'cap': cap,
+                'utilization_pct': utilization,
                 'has_day_off': t.day_off is not None,
                 'day_off': t.day_off,
                 'windows_by_day': per_day,
