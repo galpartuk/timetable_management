@@ -115,6 +115,47 @@ class SolverContext:
 # Handlers
 # ---------------------------------------------------------------------------
 
+@register('group_blocked_slot')
+def group_blocked_slot(ctx: SolverContext, c):
+    """Block every teacher in the constraint's tag at the listed slots.
+
+    parameters: {"slots": [{"day": 3, "period": 1}, ...]}
+
+    Used for staff meetings, team coordination periods, etc. — instead
+    of writing one teacher_availability constraint per person, tag the
+    group once and reference the tag here.
+    """
+    if not c.tag_id:
+        return
+    # Local import — avoid circular when scheduling imports the solver.
+    from apps.subjects.models import TeacherTag
+    try:
+        tag = TeacherTag.objects.prefetch_related('teachers').get(id=c.tag_id)
+    except TeacherTag.DoesNotExist:
+        return
+    slots = c.parameters.get('slots')
+    if not slots:
+        # Frontend uses a flatter shape: {day: 3, periods: [1, 2]}.
+        # Expand to the canonical {slots: [{day, period}]} list.
+        day_val = c.parameters.get('day')
+        periods = c.parameters.get('periods') or []
+        if day_val is not None and periods:
+            slots = [{'day': day_val, 'period': p} for p in periods]
+    blocked = set()
+    for slot_info in (slots or []):
+        d = slot_info.get('day')
+        p = slot_info.get('period')
+        for ts in ctx.time_slots:
+            if ts.day == d and ts.period == p:
+                blocked.add(ctx.ts_index[ts.id])
+    if not blocked:
+        return
+    for teacher in tag.teachers.all():
+        for L in ctx.lessons_by_teacher.get(teacher.id, []):
+            for s in blocked:
+                ctx.model.add(L.var != s)
+
+
 @register('teacher_availability')
 def teacher_availability(ctx: SolverContext, c):
     """Block specific (day, period) slots for a teacher.
