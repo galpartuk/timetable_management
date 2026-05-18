@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/auth_provider.dart';
 import '../../auth/auth_state.dart';
 import '../../core/env.dart';
+import '../../i18n/tr.dart';
 import 'locale_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -23,17 +24,17 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 16),
         ],
         _Section(
-          title: 'שפה',
+          title: tr(context, 'שפה'),
           children: [
             RadioListTile<String>(
-              title: const Text('עברית'),
+              title: Text(tr(context, 'עברית')),
               value: 'he',
               groupValue: locale.languageCode,
               onChanged: (v) => ref.read(localeProvider.notifier).state =
                   Locale(v ?? 'he'),
             ),
             RadioListTile<String>(
-              title: const Text('English'),
+              title: Text(tr(context, 'English')),
               value: 'en',
               groupValue: locale.languageCode,
               onChanged: (v) => ref.read(localeProvider.notifier).state =
@@ -43,16 +44,20 @@ class SettingsScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
         _Section(
-          title: 'אודות',
+          title: tr(context, 'אודות'),
           children: [
             ListTile(
-              title: const Text('שרת'),
+              title: Text(tr(context, 'שרת')),
               subtitle: Text(Env.apiBaseUrl),
               leading: const Icon(Icons.cloud_outlined),
             ),
             ListTile(
-              title: const Text('גרסה'),
-              subtitle: const Text('0.1.0'),
+              title: Text(tr(context, 'גרסה')),
+              subtitle: Text(
+                Env.buildTimestamp.isEmpty
+                    ? Env.appVersion
+                    : '${Env.appVersion} · build ${Env.buildTimestamp}',
+              ),
               leading: const Icon(Icons.tag_outlined),
             ),
           ],
@@ -65,7 +70,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
           onPressed: () => ref.read(authProvider.notifier).logout(),
           icon: const Icon(Icons.logout),
-          label: const Text('יציאה'),
+          label: Text(tr(context, 'יציאה')),
         ),
       ],
     );
@@ -123,18 +128,18 @@ class _UserCard extends ConsumerWidget {
                     spacing: 6,
                     children: [
                       Chip(
-                        label: Text(_roleLabel(user.role)),
+                        label: Text(tr(context, _roleLabel(user.role))),
                         padding: EdgeInsets.zero,
                         visualDensity: VisualDensity.compact,
                       ),
                       if (user.profile.teacherName != null)
                         Chip(
-                          label: Text('מורה: ${user.profile.teacherName}'),
+                          label: Text(trf(context, 'מורה: {0}', [user.profile.teacherName])),
                           visualDensity: VisualDensity.compact,
                         ),
                       if (user.profile.schoolClassName != null)
                         Chip(
-                          label: Text('כיתה: ${user.profile.schoolClassName}'),
+                          label: Text(trf(context, 'כיתה: {0}', [user.profile.schoolClassName])),
                           visualDensity: VisualDensity.compact,
                         ),
                     ],
@@ -154,6 +159,8 @@ class _UserCard extends ConsumerWidget {
         'editor' => 'עורך',
         _ => 'צופה',
       };
+  // Hebrew keys above are looked up in tr() at the call site so they
+  // translate. Kept as raw strings here to keep the switch a pure func.
 }
 
 class _Section extends StatelessWidget {

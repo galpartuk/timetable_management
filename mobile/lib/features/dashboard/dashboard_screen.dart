@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/auth_provider.dart';
 import '../../auth/auth_state.dart';
+import '../../i18n/tr.dart';
 import '../admin/admin_screen.dart';
 import '../settings/settings_screen.dart';
 import '../timetable/week_view_screen.dart';
@@ -30,26 +31,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       const SettingsScreen(),
     ];
     final destinations = <NavigationDestination>[
-      const NavigationDestination(
-        icon: Icon(Icons.today_outlined),
-        selectedIcon: Icon(Icons.today),
-        label: 'היום',
+      NavigationDestination(
+        icon: const Icon(Icons.today_outlined),
+        selectedIcon: const Icon(Icons.today),
+        label: tr(context, 'היום'),
       ),
-      const NavigationDestination(
-        icon: Icon(Icons.calendar_view_week_outlined),
-        selectedIcon: Icon(Icons.calendar_view_week),
-        label: 'השבוע',
+      NavigationDestination(
+        icon: const Icon(Icons.calendar_view_week_outlined),
+        selectedIcon: const Icon(Icons.calendar_view_week),
+        label: tr(context, 'השבוע'),
       ),
       if (isAdmin)
-        const NavigationDestination(
-          icon: Icon(Icons.admin_panel_settings_outlined),
-          selectedIcon: Icon(Icons.admin_panel_settings),
-          label: 'ניהול',
+        NavigationDestination(
+          icon: const Icon(Icons.admin_panel_settings_outlined),
+          selectedIcon: const Icon(Icons.admin_panel_settings),
+          label: tr(context, 'ניהול'),
         ),
-      const NavigationDestination(
-        icon: Icon(Icons.settings_outlined),
-        selectedIcon: Icon(Icons.settings),
-        label: 'הגדרות',
+      NavigationDestination(
+        icon: const Icon(Icons.settings_outlined),
+        selectedIcon: const Icon(Icons.settings),
+        label: tr(context, 'הגדרות'),
       ),
     ];
 
@@ -57,7 +58,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titleForIndex(selected, isAdmin)),
+        title: Text(_titleForIndex(context, selected, isAdmin)),
         centerTitle: false,
       ),
       body: pages[selected],
@@ -69,10 +70,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  String _titleForIndex(int i, bool isAdmin) {
+  String _titleForIndex(BuildContext context, int i, bool isAdmin) {
     final labels = isAdmin
         ? ['היום', 'השבוע', 'ניהול', 'הגדרות']
         : ['היום', 'השבוע', 'הגדרות'];
-    return labels[i.clamp(0, labels.length - 1)];
+    return tr(context, labels[i.clamp(0, labels.length - 1)]);
   }
 }

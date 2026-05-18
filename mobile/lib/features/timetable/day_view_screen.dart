@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/auth_provider.dart';
 import '../../auth/auth_state.dart';
 import '../../features/today/today_screen.dart';
+import '../../i18n/tr.dart';
 import '../../models/timetable.dart';
 import '../../repositories/timetable_repository.dart';
 import '../../widgets/empty_state.dart';
@@ -33,12 +34,12 @@ class DayViewScreen extends ConsumerWidget {
     final slots = ref.watch(timeSlotsProvider);
 
     return Scaffold(
-      appBar: AppBar(title: Text(_names[day] ?? '')),
+      appBar: AppBar(title: Text(tr(context, _names[day] ?? ''))),
       body: schedule.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => EmptyState(
           icon: Icons.error_outline,
-          title: 'שגיאה',
+          title: tr(context, 'שגיאה'),
           subtitle: '$e',
         ),
         data: (data) {
@@ -47,7 +48,7 @@ class DayViewScreen extends ConsumerWidget {
           if (entries.isEmpty) {
             return EmptyState(
               icon: Icons.calendar_today_outlined,
-              title: 'אין שיעורים ביום זה',
+              title: tr(context, 'אין שיעורים ביום זה'),
             );
           }
           final slotMap = <int, TimeSlot>{

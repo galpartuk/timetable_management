@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  Box, Card, CardContent, Grid, Typography, Button, Chip, Stack,
+  Autocomplete, Box, Card, CardContent, Grid, Typography, Button, Chip, Stack, TextField,
 } from '@mui/material';
 import {
   People as TeachersIcon,
@@ -14,6 +14,7 @@ import {
   ArrowBack as ArrowBackIcon,
   ArrowForward as ArrowForwardIcon,
   AutoAwesome as SparkleIcon,
+  Visibility as ViewAsIcon,
 } from '@mui/icons-material';
 import {
   getTeachers, getSubjects, getClasses, getAssignments, getTimetables,
@@ -59,6 +60,8 @@ export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [stats, setStats] = useState({ teachers: 0, subjects: 0, classes: 0, assignments: 0 });
+  const [teachersList, setTeachersList] = useState<any[]>([]);
+  const [classesList, setClassesList] = useState<any[]>([]);
   const [timetables, setTimetables] = useState<any[]>([]);
   const [latestQuality, setLatestQuality] = useState<TimetableQuality | null>(null);
   const isRtl = i18n.language === 'he';
@@ -78,6 +81,8 @@ export default function Dashboard() {
         classes: classes.data.count ?? classes.data.results?.length ?? 0,
         assignments: assignments.data.count ?? assignments.data.results?.length ?? 0,
       });
+      setTeachersList(teachers.data.results ?? []);
+      setClassesList(classes.data.results ?? []);
       const list = tt.data.results ?? [];
       setTimetables(list);
       // Latest completed timetable → fetch its quality for the KPI bar.
@@ -228,6 +233,54 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* View-as shortcut — mirrors mobile's view-as chip. Pick any
+          teacher or class and jump to /timetable already filtered. */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={2}
+            sx={{ alignItems: { md: 'center' } }}
+          >
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 200 }}>
+              <ViewAsIcon sx={{ color: 'primary.main', fontSize: 22 }} />
+              <Box>
+                <Typography sx={{ fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
+                  {isRtl ? 'צפייה במערכת של' : 'View timetable of'}
+                </Typography>
+                <Typography sx={{ fontSize: 11, color: 'grey.500' }}>
+                  {isRtl ? 'בחרו מורה או כיתה כדי לפתוח את המערכת המסוננת' : 'Pick a teacher or class to open a filtered timetable'}
+                </Typography>
+              </Box>
+            </Stack>
+            <Autocomplete
+              sx={{ flex: 1, minWidth: 220 }}
+              size="small"
+              options={teachersList}
+              getOptionLabel={(t: any) => (t.full_name ?? `${t.first_name ?? ''} ${t.last_name ?? ''}`).trim()}
+              renderInput={(params) => (
+                <TextField {...params} label={isRtl ? 'מורה' : 'Teacher'} placeholder={isRtl ? 'חיפוש מורה' : 'Search teacher'} />
+              )}
+              onChange={(_, v: any) => {
+                if (v?.id) navigate(`/timetable?teacher=${v.id}`);
+              }}
+            />
+            <Autocomplete
+              sx={{ flex: 1, minWidth: 220 }}
+              size="small"
+              options={classesList}
+              getOptionLabel={(c: any) => c.display_name ?? c.name ?? ''}
+              renderInput={(params) => (
+                <TextField {...params} label={isRtl ? 'כיתה' : 'Class'} placeholder={isRtl ? 'חיפוש כיתה' : 'Search class'} />
+              )}
+              onChange={(_, v: any) => {
+                if (v?.id) navigate(`/timetable?class=${v.id}`);
+              }}
+            />
+          </Stack>
+        </CardContent>
+      </Card>
 
       {/* Bento: featured CTA + recent + tip */}
       <Grid container spacing={2.5}>

@@ -3,8 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/auth_provider.dart';
 import '../../auth/auth_state.dart';
+import '../../i18n/tr.dart';
 import '../../repositories/timetable_repository.dart';
 import '../../widgets/empty_state.dart';
+import 'all_classes_screen.dart';
+import 'all_teachers_screen.dart';
 
 final qualityProvider = FutureProvider.family<Map<String, dynamic>, int>(
     (ref, timetableId) async {
@@ -20,8 +23,8 @@ class AdminScreen extends ConsumerWidget {
     if (auth is! AuthAuthed || !auth.user.isAdmin) {
       return EmptyState(
         icon: Icons.lock_outline,
-        title: 'אזור מנהל',
-        subtitle: 'תפקיד שלך אינו מאפשר גישה',
+        title: tr(context, 'אזור מנהל'),
+        subtitle: tr(context, 'תפקיד שלך אינו מאפשר גישה'),
       );
     }
     final active = ref.watch(activeTimetableProvider);
@@ -29,15 +32,15 @@ class AdminScreen extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => EmptyState(
         icon: Icons.error_outline,
-        title: 'שגיאה',
+        title: tr(context, 'שגיאה'),
         subtitle: '$e',
       ),
       data: (tt) {
         if (tt == null) {
           return EmptyState(
             icon: Icons.calendar_today_outlined,
-            title: 'אין מערכת פעילה',
-            subtitle: 'יש ליצור מערכת באתר תחילה',
+            title: tr(context, 'אין מערכת פעילה'),
+            subtitle: tr(context, 'יש ליצור מערכת באתר תחילה'),
           );
         }
         return _AdminBody(timetableId: tt.id, timetableName: tt.name);
@@ -86,29 +89,29 @@ class _AdminBody extends ConsumerWidget {
           runSpacing: 8,
           children: [
             _Kpi(
-              label: 'שיעורים',
+              label: tr(context, 'שיעורים'),
               value: (totals['entries'] ?? 0).toString(),
               tone: _Tone.primary,
             ),
             _Kpi(
-              label: 'חלונות מורים',
+              label: tr(context, 'חלונות מורים'),
               value: (totals['total_teacher_windows'] ?? 0).toString(),
               tone: _gradeTone(totals['total_teacher_windows'] ?? 0, 30, 100),
             ),
             _Kpi(
-              label: 'חלונות ארוכים',
+              label: tr(context, 'חלונות ארוכים'),
               value: (totals['total_long_windows'] ?? 0).toString(),
               tone: (totals['total_long_windows'] ?? 0) == 0
                   ? _Tone.good
                   : _Tone.bad,
             ),
             _Kpi(
-              label: 'חלונות כיתות',
+              label: tr(context, 'חלונות כיתות'),
               value: (totals['total_class_windows'] ?? 0).toString(),
               tone: _gradeTone(totals['total_class_windows'] ?? 0, 10, 50),
             ),
             _Kpi(
-              label: 'אחרי 8',
+              label: tr(context, 'אחרי 8'),
               value: (totals['late_period_lessons'] ?? 0).toString(),
               tone: _Tone.warn,
             ),
@@ -124,13 +127,13 @@ class _AdminBody extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'הרצת סולבר',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                      Text(
+                        tr(context, 'הרצת סולבר'),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'יצירה חדשה של המערכת תחליף את השיעורים הקיימים.',
+                        tr(context, 'יצירה חדשה של המערכת תחליף את השיעורים הקיימים.'),
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.outline,
@@ -163,15 +166,49 @@ class _AdminBody extends ConsumerWidget {
                             color: Colors.white,
                           ),
                         )
-                      : const Text('הרץ'),
+                      : Text(tr(context, 'הרץ')),
                 ),
               ],
             ),
           ),
         ),
         const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.groups_outlined),
+            title: Text(
+              tr(context, 'מערכת לכל המורים'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(tr(context, 'צפו במערכת השבועית של כל מורה')),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AllTeachersScreen()),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.class_outlined),
+            title: Text(
+              tr(context, 'מערכת לכל הכיתות'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(tr(context, 'צפו במערכת השבועית של כל כיתה')),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AllClassesScreen()),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
         Text(
-          '10 המורים עם הכי הרבה חלונות',
+          tr(context, '10 המורים עם הכי הרבה חלונות'),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -185,8 +222,8 @@ class _AdminBody extends ConsumerWidget {
         if (teachers.cast<Map<String, dynamic>>().every((t) => (t['windows'] ?? 0) == 0))
           EmptyState(
             icon: Icons.check_circle_outline,
-            title: 'אין חלונות אצל אף מורה',
-            subtitle: 'המערכת איכותית',
+            title: tr(context, 'אין חלונות אצל אף מורה'),
+            subtitle: tr(context, 'המערכת איכותית'),
           ),
       ],
     );
@@ -268,7 +305,7 @@ class _TeacherTile extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
           ),
           subtitle: Text(
-            '${t['lessons']} שיעורים · ${t['days_taught']} ימי הוראה',
+            trf(context, '{0} שיעורים · {1} ימי הוראה', [t['lessons'], t['days_taught']]),
             style: const TextStyle(fontSize: 12),
           ),
           trailing: Column(
@@ -276,12 +313,12 @@ class _TeacherTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '$windows חלונות',
+                trf(context, '{0} חלונות', [windows]),
                 style: TextStyle(color: color, fontWeight: FontWeight.w800),
               ),
               if (longW > 0)
                 Text(
-                  '$longW ארוכים',
+                  trf(context, '{0} ארוכים', [longW]),
                   style: const TextStyle(
                     color: Color(0xFFBE123C),
                     fontSize: 11,

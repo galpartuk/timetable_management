@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../api/timetable_api.dart';
 import '../auth/auth_provider.dart';
 import '../core/failure.dart';
+import '../models/teacher.dart';
 import '../models/timetable.dart';
 import '../models/timetable_entry.dart';
 
@@ -39,6 +40,16 @@ final timetableRepositoryProvider = Provider<TimetableRepository>((ref) {
 /// List of all timetables (admin uses this; teachers see the latest).
 final timetablesListProvider = FutureProvider<List<Timetable>>((ref) async {
   return ref.read(timetableApiProvider).list();
+});
+
+/// List of all teachers — admin uses this to browse any teacher's week.
+final teachersListProvider = FutureProvider<List<Teacher>>((ref) async {
+  return ref.read(referenceApiProvider).teachers();
+});
+
+/// List of all classes — admin uses this to browse any class's week.
+final classesListProvider = FutureProvider<List<SchoolClass>>((ref) async {
+  return ref.read(referenceApiProvider).schoolClasses();
 });
 
 /// The "active" timetable — the latest completed one. Falls back to the
