@@ -5,6 +5,7 @@ urlpatterns = [
     path('import/upload/', views.upload_excel, name='upload-excel'),
     path('import/days-off/', views.upload_days_off, name='upload-days-off'),
     path('import/logs/', views.import_logs, name='import-logs'),
+    path('import/gap-analysis/', views.gap_analysis, name='import-gap-analysis'),
     # Export
     path('export/options/', views.list_export_options, name='export-options'),
     path('export/excel/', views.export_excel, name='export-excel'),

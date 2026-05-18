@@ -15,7 +15,10 @@ import {
   ArrowForward as ArrowForwardIcon,
   AutoAwesome as SparkleIcon,
 } from '@mui/icons-material';
-import { getTeachers, getSubjects, getClasses, getAssignments, getTimetables } from '../../api/client';
+import {
+  getTeachers, getSubjects, getClasses, getAssignments, getTimetables,
+  getTimetableQuality, type TimetableQuality,
+} from '../../api/client';
 
 type StatTone = 'indigo' | 'emerald' | 'amber' | 'rose';
 
@@ -26,11 +29,38 @@ const TONE_STYLES: Record<StatTone, { fg: string; bg: string; ring: string }> = 
   rose:    { fg: '#e11d48', bg: 'rgba(244, 63, 94, 0.10)',  ring: 'rgba(244, 63, 94, 0.18)'  },
 };
 
+function KpiBadge({ label, value, tone }: {
+  label: string;
+  value: number;
+  tone: 'good' | 'warn' | 'bad';
+}) {
+  const palette = {
+    good: { bg: 'rgba(16,185,129,0.10)', fg: '#047857' },
+    warn: { bg: 'rgba(245,158,11,0.10)', fg: '#b45309' },
+    bad: { bg: 'rgba(244,63,94,0.10)', fg: '#be123c' },
+  }[tone];
+  return (
+    <Box sx={{
+      px: 1.5, py: 0.75, borderRadius: 2,
+      background: palette.bg, color: palette.fg,
+      minWidth: 96,
+    }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 700, opacity: 0.85, lineHeight: 1.2 }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: 22, fontWeight: 800, lineHeight: 1, mt: 0.25 }}>
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [stats, setStats] = useState({ teachers: 0, subjects: 0, classes: 0, assignments: 0 });
   const [timetables, setTimetables] = useState<any[]>([]);
+  const [latestQuality, setLatestQuality] = useState<TimetableQuality | null>(null);
   const isRtl = i18n.language === 'he';
   const ChevronEnd = isRtl ? ArrowBackIcon : ArrowForwardIcon;
 
@@ -48,7 +78,15 @@ export default function Dashboard() {
         classes: classes.data.count ?? classes.data.results?.length ?? 0,
         assignments: assignments.data.count ?? assignments.data.results?.length ?? 0,
       });
-      setTimetables(tt.data.results ?? []);
+      const list = tt.data.results ?? [];
+      setTimetables(list);
+      // Latest completed timetable → fetch its quality for the KPI bar.
+      const latest = list.find((x: any) => x.status === 'completed');
+      if (latest) {
+        getTimetableQuality(latest.id)
+          .then((r) => setLatestQuality(r.data))
+          .catch(() => setLatestQuality(null));
+      }
     });
   }, []);
 
@@ -136,6 +174,60 @@ export default function Dashboard() {
           );
         })}
       </Grid>
+
+      {/* Quality KPI strip for the most-recent completed timetable */}
+      {latestQuality && (
+        <Card sx={{ mb: 3, p: 0 }}>
+          <CardContent>
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}
+            >
+              <Box sx={{ flex: 1 }}>
+                <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'grey.500', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                  איכות מערכת אחרונה
+                </Typography>
+                <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 0.25 }}>
+                  {latestQuality.name}
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
+                  {latestQuality.totals.entries} שיעורים · {latestQuality.teachers.length} מורים · {latestQuality.classes.length} כיתות
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
+                <KpiBadge
+                  label="חלונות מורים"
+                  value={latestQuality.totals.total_teacher_windows}
+                  tone={latestQuality.totals.total_teacher_windows < 30 ? 'good' : latestQuality.totals.total_teacher_windows < 100 ? 'warn' : 'bad'}
+                />
+                <KpiBadge
+                  label="חלונות ארוכים"
+                  value={latestQuality.totals.total_long_windows}
+                  tone={latestQuality.totals.total_long_windows === 0 ? 'good' : 'bad'}
+                />
+                <KpiBadge
+                  label="חלונות כיתות"
+                  value={latestQuality.totals.total_class_windows}
+                  tone={latestQuality.totals.total_class_windows < 10 ? 'good' : latestQuality.totals.total_class_windows < 50 ? 'warn' : 'bad'}
+                />
+                <KpiBadge
+                  label="אחרי 8"
+                  value={latestQuality.totals.late_period_lessons}
+                  tone="warn"
+                />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => navigate('/manage')}
+                >
+                  פירוט מלא
+                </Button>
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Bento: featured CTA + recent + tip */}
       <Grid container spacing={2.5}>

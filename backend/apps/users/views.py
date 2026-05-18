@@ -4,10 +4,21 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
+from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from .models import AuditActivity, AuditLogin, UserProfile
+
+
+def _login_response(user):
+    """Issue (or fetch) the mobile-app token and attach it to the user
+    payload. Web clients ignore the field; mobile stores it and sends
+    `Authorization: Token <key>` on subsequent requests."""
+    token, _ = Token.objects.get_or_create(user=user)
+    data = UserSerializer(user).data
+    data['token'] = token.key
+    return Response(data)
 from .permissions import IsSuperAdmin
 from .serializers import (
     AdminUserWriteSerializer,
@@ -41,7 +52,7 @@ def login_view(request):
         return Response({'error': 'החשבון מושבת'}, status=status.HTTP_403_FORBIDDEN)
     login(request, user)
     audit.log_login(request=request, method='password', success=True, user=user)
-    return Response(UserSerializer(user).data)
+    return _login_response(user)
 
 
 @api_view(['POST'])
@@ -90,7 +101,7 @@ def google_login_view(request):
 
     login(request, user)
     audit.log_login(request=request, method='google', success=True, user=user)
-    return Response(UserSerializer(user).data)
+    return _login_response(user)
 
 
 @api_view(['POST'])
@@ -134,11 +145,15 @@ def verify_otp_view(request):
         return Response({'error': 'החשבון מושבת'}, status=status.HTTP_403_FORBIDDEN)
     login(request, user)
     audit.log_login(request=request, method='phone', success=True, user=user)
-    return Response(UserSerializer(user).data)
+    return _login_response(user)
 
 
 @api_view(['POST'])
 def logout_view(request):
+    # Revoke the mobile token first so a stolen device can't keep using it
+    # after the user logs out. The web session is destroyed by `logout()`.
+    if request.user.is_authenticated:
+        Token.objects.filter(user=request.user).delete()
     logout(request)
     return Response({'message': 'התנתקת בהצלחה'})
 

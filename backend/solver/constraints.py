@@ -17,12 +17,27 @@ from ortools.sat.python import cp_model
 
 
 HANDLERS: dict[str, Callable] = {}
+# Soft handlers receive (ctx, constraint, soft_weight) and return a list
+# of boolean indicators to be summed into the objective with `soft_weight`
+# applied per indicator. The engine consults this map when a Constraint
+# record has priority='soft'.
+SOFT_HANDLERS: dict[str, Callable] = {}
 
 
 def register(constraint_type: str):
     """Decorator that registers a handler for a Constraint.constraint_type value."""
     def decorator(fn):
         HANDLERS[constraint_type] = fn
+        return fn
+    return decorator
+
+
+def register_soft(constraint_type: str):
+    """Decorator for a soft-variant handler. Should return a list of
+    bool vars representing constraint violations — each violated bool
+    will be weighted into the objective."""
+    def decorator(fn):
+        SOFT_HANDLERS[constraint_type] = fn
         return fn
     return decorator
 
@@ -37,11 +52,22 @@ class Lesson:
 class SolverContext:
     """Shared state for constraint handlers — owns the model, lessons, and lazy bool indicators."""
 
-    def __init__(self, model: cp_model.CpModel, time_slots, lessons: list[Lesson]):
+    def __init__(
+        self,
+        model: cp_model.CpModel,
+        time_slots,
+        lessons: list[Lesson],
+        pool_classes: dict[int, list[int]] | None = None,
+    ):
         self.model = model
         self.time_slots = time_slots
         self.num_slots = len(time_slots)
         self.lessons = lessons
+        # Map: assignment_id → list of class_ids this lesson is delivered to.
+        # For non-pooled assignments this is a singleton list. We use it to
+        # ensure the no-class-conflict constraint covers every class in the
+        # pool (not just the primary).
+        self.pool_classes = pool_classes or {}
 
         self.ts_index = {ts.id: i for i, ts in enumerate(time_slots)}
         self.slots_by_day: dict[int, list[int]] = {}
@@ -53,11 +79,16 @@ class SolverContext:
         self.lessons_by_class_subject: dict[tuple[int, int], list[Lesson]] = {}
         for L in lessons:
             a = L.assignment
-            self.lessons_by_class.setdefault(a.school_class_id, []).append(L)
+            # A pooled lesson appears in every member-class's lesson list,
+            # so the "no two lessons at the same slot for one class" constraint
+            # blocks any class in the pool from a conflicting subject.
+            class_ids = self.pool_classes.get(a.id) or [a.school_class_id]
+            for cid in class_ids:
+                self.lessons_by_class.setdefault(cid, []).append(L)
+                self.lessons_by_class_subject.setdefault(
+                    (cid, a.subject_id), []
+                ).append(L)
             self.lessons_by_teacher.setdefault(a.teacher_id, []).append(L)
-            self.lessons_by_class_subject.setdefault(
-                (a.school_class_id, a.subject_id), []
-            ).append(L)
 
         self._at_slot: dict[tuple[int, int], object] = {}
 
@@ -162,6 +193,155 @@ def max_per_day_subject(ctx: SolverContext, c):
             continue
         for day in ctx.slots_by_day:
             ctx.model.add(ctx.day_count(lessons, day) <= max_per_day)
+
+
+@register('lunch_break')
+def lunch_break(ctx: SolverContext, c):
+    """Reserve a particular period as no-class for selected classes.
+
+    parameters: {"periods": [5, 6], "days": [1, 2, 3, 4, 5] (optional)}
+    School class filter from the Constraint FK (null = all classes).
+
+    Effect: for each (class, day, period) combination matching the rule,
+    no lesson can be scheduled there. We add `lesson_var != slot_index`
+    for every lesson on every class that the rule applies to.
+    """
+    periods = c.parameters.get('periods', [5])
+    if not isinstance(periods, list):
+        periods = [periods]
+    days = c.parameters.get('days') or list(ctx.slots_by_day.keys())
+
+    bad_slot_indices = set()
+    for ts in ctx.time_slots:
+        if ts.day in days and ts.period in periods:
+            bad_slot_indices.add(ctx.ts_index[ts.id])
+
+    target_class = c.school_class_id
+    class_ids = [target_class] if target_class else list(ctx.lessons_by_class.keys())
+    for class_id in class_ids:
+        for L in ctx.lessons_by_class.get(class_id, []):
+            for s in bad_slot_indices:
+                ctx.model.add(L.var != s)
+
+
+@register('consecutive_pair')
+def consecutive_pair(ctx: SolverContext, c):
+    """Force selected lessons of a (class, subject) into consecutive
+    period pairs on the same day.
+
+    parameters: {"min_pairs": 1}
+    School class + subject filters from the Constraint FKs (both required).
+
+    Effect: for each (class, subject) bucket, we add at-least-min_pairs
+    pairs where two lessons share a day and their periods differ by
+    exactly 1. Useful for subjects that need a double-period block.
+
+    Note: this is a relatively expensive constraint (introduces N×N
+    bool variables per bucket) — apply it selectively to the subjects
+    that actually need pairing.
+    """
+    if not c.school_class_id or not c.subject_id:
+        return
+    min_pairs = int(c.parameters.get('min_pairs', 1))
+    key = (c.school_class_id, c.subject_id)
+    lessons = ctx.lessons_by_class_subject.get(key, [])
+    if len(lessons) < 2:
+        return
+
+    # For each pair of lessons (i, j), is_pair[i,j] = 1 iff they're on
+    # the same day and consecutive periods.
+    period_for_slot = {
+        ctx.ts_index[ts.id]: (ts.day, ts.period) for ts in ctx.time_slots
+    }
+    pair_bools = []
+    for i, L1 in enumerate(lessons):
+        for L2 in lessons[i + 1:]:
+            for s1, (d1, p1) in period_for_slot.items():
+                for s2, (d2, p2) in period_for_slot.items():
+                    if d1 != d2 or abs(p1 - p2) != 1:
+                        continue
+                    b = ctx.model.new_bool_var('')
+                    # b = 1 iff L1==s1 and L2==s2
+                    ctx.model.add(L1.var == s1).only_enforce_if(b)
+                    ctx.model.add(L2.var == s2).only_enforce_if(b)
+                    pair_bools.append(b)
+    if pair_bools:
+        ctx.model.add(sum(pair_bools) >= min_pairs)
+
+
+@register_soft('teacher_availability')
+def teacher_availability_soft(ctx: SolverContext, c, soft_weight: int) -> list:
+    """Soft variant: each violation (teacher teaches at a flagged slot)
+    contributes one penalty bool to the objective.
+
+    parameters: {"unavailable": [{"day": 1, "period": 2}, ...]}
+    """
+    teacher_id = c.teacher_id
+    if not teacher_id:
+        return []
+    bad_slots = set()
+    for slot_info in c.parameters.get('unavailable', []):
+        day = slot_info.get('day')
+        period = slot_info.get('period')
+        for ts in ctx.time_slots:
+            if ts.day == day and ts.period == period:
+                bad_slots.add(ctx.ts_index[ts.id])
+    penalties = []
+    for L in ctx.lessons_by_teacher.get(teacher_id, []):
+        for s in bad_slots:
+            penalties.append(ctx.at_slot(L.idx, s))
+    return penalties
+
+
+@register('no_last_period')
+def no_last_period(ctx: SolverContext, c):
+    """Forbid lessons in the school's last period(s).
+
+    parameters: {"periods": [9, 10]}  // periods considered "last"
+    """
+    last_periods = set(c.parameters.get('periods', [10]))
+    bad_slots = set()
+    for ts in ctx.time_slots:
+        if ts.period in last_periods:
+            bad_slots.add(ctx.ts_index[ts.id])
+    targets: list[Lesson] = []
+    if c.teacher_id:
+        targets = ctx.lessons_by_teacher.get(c.teacher_id, [])
+    elif c.school_class_id:
+        targets = ctx.lessons_by_class.get(c.school_class_id, [])
+    elif c.subject_id:
+        targets = [
+            L for (cid, sid), lessons in ctx.lessons_by_class_subject.items()
+            for L in lessons if sid == c.subject_id
+        ]
+    else:
+        targets = ctx.lessons
+    for L in targets:
+        for s in bad_slots:
+            ctx.model.add(L.var != s)
+
+
+@register_soft('no_last_period')
+def no_last_period_soft(ctx: SolverContext, c, soft_weight: int) -> list:
+    """Soft variant — each lesson placed in a "last" period contributes
+    a penalty bool to the objective."""
+    last_periods = set(c.parameters.get('periods', [10]))
+    bad_slots = set()
+    for ts in ctx.time_slots:
+        if ts.period in last_periods:
+            bad_slots.add(ctx.ts_index[ts.id])
+    if c.teacher_id:
+        targets = ctx.lessons_by_teacher.get(c.teacher_id, [])
+    elif c.school_class_id:
+        targets = ctx.lessons_by_class.get(c.school_class_id, [])
+    elif c.subject_id:
+        targets = [
+            L for (cid, sid), lessons in ctx.lessons_by_class_subject.items()
+            for L in lessons if sid == c.subject_id
+        ]
+    else:
+        targets = ctx.lessons
+    return [ctx.at_slot(L.idx, s) for L in targets for s in bad_slots]
 
 
 def apply_teacher_day_off(ctx: SolverContext, teachers_by_id: dict):

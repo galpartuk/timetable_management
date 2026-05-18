@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAiAssistantContext } from '../../components/AiAssistant';
 import {
@@ -6,11 +7,13 @@ import {
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Stack,
 } from '@mui/material';
-import { CalendarMonth, Add, AutoAwesome, DeleteOutlined } from '@mui/icons-material';
+import { CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print } from '@mui/icons-material';
 import {
   getTimetables, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
+  getTimetableQuality, moveTimetableEntry, toggleEntryLock,
+  type TimetableQuality,
 } from '../../api/client';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
@@ -26,9 +29,16 @@ const STATUS_CHIP: Record<string, 'default' | 'primary' | 'success' | 'error' | 
 
 export default function TimetablePage() {
   const { t, i18n } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const teacherParam = searchParams.get('teacher');
+  const classParam = searchParams.get('class');
+  const timetableParam = searchParams.get('timetable');
+
   const [timetables, setTimetables] = useState<any[]>([]);
   const [selectedTT, setSelectedTT] = useState<any>(null);
-  const [viewMode, setViewMode] = useState<'class' | 'teacher'>('class');
+  const [viewMode, setViewMode] = useState<'class' | 'teacher'>(
+    teacherParam ? 'teacher' : 'class'
+  );
   const [classes, setClasses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<number | ''>('');
@@ -36,17 +46,45 @@ export default function TimetablePage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [quality, setQuality] = useState<TimetableQuality | null>(null);
   const isRtl = i18n.language === 'he';
 
   useEffect(() => {
     getTimetables().then((r) => {
       const list = r.data.results ?? [];
       setTimetables(list);
-      if (list.length > 0) setSelectedTT(list[0]);
+      // If the URL has ?timetable=ID, prefer it; otherwise pick the first.
+      const target = timetableParam
+        ? list.find((tt: any) => tt.id === Number(timetableParam))
+        : list[0];
+      if (target) setSelectedTT(target);
     }).catch(() => {});
     getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {});
     getTeachers().then((r) => setTeachers(r.data.results ?? [])).catch(() => {});
-  }, []);
+  }, [timetableParam]);
+
+  // Apply teacher/class param once timetable is loaded.
+  useEffect(() => {
+    if (!selectedTT) return;
+    if (teacherParam) {
+      setSelectedId(Number(teacherParam));
+      setViewMode('teacher');
+    } else if (classParam) {
+      setSelectedId(Number(classParam));
+      setViewMode('class');
+    }
+  }, [selectedTT, teacherParam, classParam]);
+  void setSearchParams;
+
+  useEffect(() => {
+    if (!selectedTT) {
+      setQuality(null);
+      return;
+    }
+    getTimetableQuality(selectedTT.id)
+      .then((r) => setQuality(r.data))
+      .catch(() => setQuality(null));
+  }, [selectedTT?.id]);
 
   useEffect(() => {
     if (!selectedTT || !selectedId) {
@@ -58,6 +96,15 @@ export default function TimetablePage() {
       .then((r) => setEntries(r.data))
       .catch(() => setEntries([]));
   }, [selectedTT, selectedId, viewMode]);
+
+  // Find the quality info for the currently-selected teacher / class
+  const selectedQuality = useMemo(() => {
+    if (!quality || !selectedId) return null;
+    if (viewMode === 'teacher') {
+      return quality.teachers.find((t) => t.id === selectedId) || null;
+    }
+    return quality.classes.find((c) => c.id === selectedId) || null;
+  }, [quality, selectedId, viewMode]);
 
   const handleGenerate = async () => {
     if (!selectedTT) return;
@@ -140,10 +187,20 @@ export default function TimetablePage() {
             מחק
           </Button>
           <Button
+            variant="outlined"
+            startIcon={<Print />}
+            disabled={!selectedTT || !selectedId}
+            onClick={() => window.print()}
+            className="no-print"
+          >
+            הדפסה
+          </Button>
+          <Button
             variant="contained"
             startIcon={generating ? <CircularProgress size={18} color="inherit" /> : <AutoAwesome />}
             onClick={handleGenerate}
             disabled={generating || !selectedTT}
+            className="no-print"
           >
             {generating ? t('timetable.generating') : t('timetable.generate')}
           </Button>
@@ -210,12 +267,37 @@ export default function TimetablePage() {
         </CardContent>
       </Card>
 
+      {selectedTT && quality && (
+        <QualitySummaryBar quality={quality} />
+      )}
+
       {selectedTT && selectedId ? (
-        <Card>
-          <CardContent sx={{ p: { xs: 1.5, md: 2.5 }, overflowX: 'auto' }}>
-            <TimetableGrid grid={grid} viewMode={viewMode} />
-          </CardContent>
-        </Card>
+        <Box sx={{ display: 'flex', gap: 2.5, flexDirection: { xs: 'column', lg: 'row' } }}>
+          <Card sx={{ flex: 1, minWidth: 0 }}>
+            <CardContent sx={{ p: { xs: 1.5, md: 2.5 }, overflowX: 'auto' }}>
+              <TimetableGrid
+                grid={grid}
+                viewMode={viewMode}
+                entries={entries}
+                timetableId={selectedTT.id}
+                onChange={() => {
+                  // Reload entries after a drag/drop or lock change.
+                  const fetcher = viewMode === 'class' ? getTimetableByClass : getTimetableByTeacher;
+                  fetcher(selectedTT.id, selectedId as number)
+                    .then((r) => setEntries(r.data))
+                    .catch(() => {});
+                }}
+              />
+            </CardContent>
+          </Card>
+          {selectedQuality && (
+            <SelectionDetailCard
+              quality={selectedQuality}
+              viewMode={viewMode}
+              entries={entries}
+            />
+          )}
+        </Box>
       ) : (
         <Card>
           <CardContent sx={{ py: 8 }}>
@@ -271,11 +353,33 @@ export default function TimetablePage() {
 function TimetableGrid({
   grid,
   viewMode,
+  entries,
+  timetableId,
+  onChange,
 }: {
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
+  entries: any[];
+  timetableId?: number;
+  onChange?: () => void;
 }) {
   const { t } = useTranslation();
+
+  // Pre-compute, for each day, the range of periods the selected owner
+  // actually teaches/attends — so we can render empty cells *within*
+  // that range as "windows" (חלונות) and cells outside it as plain idle.
+  const dayBounds = useMemo(() => {
+    const bounds: Record<number, { min: number; max: number } | null> = {};
+    for (let day = 1; day <= 5; day++) {
+      const periods = entries
+        .filter((e: any) => e.day === day)
+        .map((e: any) => e.period);
+      bounds[day] = periods.length
+        ? { min: Math.min(...periods), max: Math.max(...periods) }
+        : null;
+    }
+    return bounds;
+  }, [entries]);
 
   return (
     <Box
@@ -297,6 +401,9 @@ function TimetableGrid({
           period={period}
           grid={grid}
           viewMode={viewMode}
+          dayBounds={dayBounds}
+          timetableId={timetableId}
+          onChange={onChange}
         />
       ))}
     </Box>
@@ -307,10 +414,16 @@ function PeriodRow({
   period,
   grid,
   viewMode,
+  dayBounds,
+  timetableId,
+  onChange,
 }: {
   period: number;
   grid: Record<string, any>;
   viewMode: 'class' | 'teacher';
+  dayBounds: Record<number, { min: number; max: number } | null>;
+  timetableId?: number;
+  onChange?: () => void;
 }) {
   return (
     <>
@@ -331,23 +444,97 @@ function PeriodRow({
         {period}
       </Box>
       {DAYS.map((_, dayIdx) => {
-        const entry = grid[`${dayIdx + 1}-${period}`];
-        return <Cell key={dayIdx} entry={entry} viewMode={viewMode} />;
+        const day = dayIdx + 1;
+        const entry = grid[`${day}-${period}`];
+        const bound = dayBounds[day];
+        const isWindow =
+          !entry && !!bound && period > bound.min && period < bound.max;
+        return (
+          <Cell
+            key={dayIdx}
+            entry={entry}
+            viewMode={viewMode}
+            isWindow={isWindow}
+            day={day}
+            period={period}
+            timetableId={timetableId}
+            onChange={onChange}
+          />
+        );
       })}
     </>
   );
 }
 
-function Cell({ entry, viewMode }: { entry: any; viewMode: 'class' | 'teacher' }) {
+function Cell({
+  entry, viewMode, isWindow, day, period, timetableId, onChange,
+}: {
+  entry: any;
+  viewMode: 'class' | 'teacher';
+  isWindow?: boolean;
+  day?: number;
+  period?: number;
+  timetableId?: number;
+  onChange?: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!timetableId || !day || !period) return;
+    e.preventDefault();
+    setDragOver(true);
+  };
+  const handleDragLeave = () => setDragOver(false);
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!timetableId || !day || !period) return;
+    const entryId = Number(e.dataTransfer.getData('entry_id'));
+    if (!entryId) return;
+    try {
+      await moveTimetableEntry(timetableId, entryId, day, period);
+      onChange?.();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'הזזה נכשלה');
+    }
+  };
+
   if (!entry) {
+    if (isWindow) {
+      return (
+        <Box
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          sx={{
+            minHeight: 76,
+            borderRadius: 2,
+            border: dragOver ? '2px solid' : '1px dashed',
+            borderColor: dragOver ? 'primary.main' : '#f59e0b',
+            background: dragOver ? 'rgba(79,70,229,0.08)' : 'rgba(245, 158, 11, 0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#b45309',
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          חלון
+        </Box>
+      );
+    }
     return (
       <Box
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         sx={{
           minHeight: 76,
           borderRadius: 2,
-          border: '1px dashed',
-          borderColor: 'grey.200',
-          background: 'transparent',
+          border: dragOver ? '2px solid' : '1px dashed',
+          borderColor: dragOver ? 'primary.main' : 'grey.200',
+          background: dragOver ? 'rgba(79,70,229,0.08)' : 'transparent',
         }}
       />
     );
@@ -355,26 +542,61 @@ function Cell({ entry, viewMode }: { entry: any; viewMode: 'class' | 'teacher' }
 
   const color = entry.subject_color || '#6366f1';
   const subText = viewMode === 'class' ? entry.teacher_name : entry.class_name;
+  const isLocked = entry.locked;
+  const canDrag = !!timetableId && !isLocked;
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('entry_id', String(entry.id));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDblClick = async () => {
+    if (!timetableId) return;
+    try {
+      await toggleEntryLock(timetableId, entry.id);
+      onChange?.();
+    } catch { /* swallow */ }
+  };
 
   return (
     <Box
+      draggable={canDrag}
+      onDragStart={canDrag ? handleDragStart : undefined}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onDoubleClick={handleDblClick}
+      title={isLocked ? 'נעול — לחיצה כפולה לפתיחה' : 'גרירה להזזה · לחיצה כפולה לנעילה'}
       sx={{
         minHeight: 76,
         borderRadius: 2,
         position: 'relative',
-        background: `${color}10`,
-        border: `1px solid ${color}30`,
+        background: dragOver ? 'rgba(79,70,229,0.10)' : `${color}10`,
+        border: dragOver
+          ? '2px solid rgba(79,70,229,0.6)'
+          : isLocked
+          ? `2px solid ${color}90`
+          : `1px solid ${color}30`,
         overflow: 'hidden',
         padding: '10px 12px',
-        cursor: 'default',
+        cursor: canDrag ? 'grab' : 'default',
         transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms',
         '&:hover': {
-          transform: 'translateY(-1px)',
-          boxShadow: `0 6px 14px -6px ${color}60`,
+          transform: canDrag ? 'translateY(-1px)' : 'none',
+          boxShadow: canDrag ? `0 6px 14px -6px ${color}60` : 'none',
           background: `${color}18`,
+        },
+        '&:active': {
+          cursor: canDrag ? 'grabbing' : 'default',
         },
       }}
     >
+      {isLocked && (
+        <Box sx={{
+          position: 'absolute', top: 4, insetInlineEnd: 4,
+          fontSize: 10, opacity: 0.7,
+        }}>🔒</Box>
+      )}
       <Box
         sx={{
           position: 'absolute',
@@ -410,6 +632,188 @@ function GridHeader({ children }: { children: React.ReactNode }) {
     >
       {children}
     </Box>
+  );
+}
+
+// ── Quality summary bar ──────────────────────────────────────────────────
+
+function QualitySummaryBar({ quality }: { quality: TimetableQuality }) {
+  const t = quality.totals;
+  return (
+    <Card sx={{ mb: 2.5 }}>
+      <CardContent sx={{ py: 1.5 }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}
+          sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}>
+          <Box>
+            <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'grey.700' }}>
+              סיכום איכות המערכת
+            </Typography>
+            <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
+              מערכת זו נוצרה תוך מזעור חלונות המורים והכיתות. ככל שהמספרים נמוכים יותר — המערכת איכותית יותר.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
+            <Stat
+              label="שיעורים"
+              value={t.entries}
+              color="primary"
+            />
+            <Stat
+              label="חלונות מורים"
+              value={t.total_teacher_windows}
+              tone={t.total_teacher_windows < 30 ? 'good' : t.total_teacher_windows < 100 ? 'warn' : 'bad'}
+              hint={`${t.teachers_with_windows} מורים מושפעים`}
+            />
+            <Stat
+              label="חלונות כיתות"
+              value={t.total_class_windows}
+              tone={t.total_class_windows < 10 ? 'good' : t.total_class_windows < 50 ? 'warn' : 'bad'}
+              hint={`${t.classes_with_windows} כיתות מושפעות`}
+            />
+            <Stat
+              label="שיעורים אחרי 8"
+              value={t.late_period_lessons}
+              tone="warn"
+            />
+          </Stack>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Stat({ label, value, tone, hint, color }: {
+  label: string;
+  value: number;
+  tone?: 'good' | 'warn' | 'bad';
+  hint?: string;
+  color?: 'primary' | 'default';
+}) {
+  const palette = {
+    good: { bg: 'rgba(16, 185, 129, 0.10)', fg: '#047857' },
+    warn: { bg: 'rgba(245, 158, 11, 0.10)', fg: '#b45309' },
+    bad: { bg: 'rgba(244, 63, 94, 0.10)', fg: '#be123c' },
+  }[tone || 'good'];
+  const isPrimary = color === 'primary';
+  return (
+    <Box sx={{
+      px: 1.5, py: 1,
+      borderRadius: 2,
+      background: isPrimary ? 'rgba(79,70,229,0.08)' : palette.bg,
+      color: isPrimary ? 'primary.dark' : palette.fg,
+      minWidth: 120,
+    }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 700, opacity: 0.7, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: 22, fontWeight: 800, lineHeight: 1, mt: 0.25 }}>
+        {value}
+      </Typography>
+      {hint && (
+        <Typography sx={{ fontSize: 10, opacity: 0.7, mt: 0.25 }}>
+          {hint}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+// ── Per-entity detail panel (shown next to the timetable grid) ──────────
+
+function SelectionDetailCard({ quality, viewMode, entries }: {
+  quality: any;
+  viewMode: 'class' | 'teacher';
+  entries: any[];
+}) {
+  const totalLessons = entries.length;
+  const dayLabels: Record<number, string> = { 1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי' };
+
+  // Per-day lesson counts and span
+  const days = [1, 2, 3, 4, 5].map((d) => {
+    const periods = entries.filter((e: any) => e.day === d).map((e: any) => e.period);
+    const lessons = periods.length;
+    const first = periods.length ? Math.min(...periods) : null;
+    const last = periods.length ? Math.max(...periods) : null;
+    const span = first && last ? last - first + 1 : 0;
+    const windows = lessons > 0 ? Math.max(0, span - lessons) : 0;
+    return { day: d, lessons, first, last, span, windows };
+  });
+
+  return (
+    <Card sx={{ flex: '0 0 320px', alignSelf: 'flex-start' }}>
+      <CardContent>
+        <Typography sx={{ fontSize: 15, fontWeight: 800, mb: 0.5 }}>
+          {quality.name}
+        </Typography>
+        <Typography sx={{ fontSize: 12, color: 'grey.500', mb: 2 }}>
+          {viewMode === 'teacher'
+            ? `${totalLessons} שיעורים · ${quality.days_taught || 0} ימי הוראה`
+            : `${totalLessons} שיעורים · ${days.filter((d) => d.lessons > 0).length} ימי לימוד`}
+        </Typography>
+
+        <Box sx={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5, mb: 2,
+        }}>
+          <Box sx={{ background: 'rgba(245,158,11,0.10)', borderRadius: 2, p: 1.25 }}>
+            <Typography sx={{ fontSize: 10, color: '#b45309', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+              חלונות
+            </Typography>
+            <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#b45309', mt: 0.25 }}>
+              {quality.windows}
+            </Typography>
+          </Box>
+          <Box sx={{ background: 'rgba(79,70,229,0.08)', borderRadius: 2, p: 1.25 }}>
+            <Typography sx={{ fontSize: 10, color: 'primary.dark', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+              שיעורים
+            </Typography>
+            <Typography sx={{ fontSize: 22, fontWeight: 800, color: 'primary.dark', mt: 0.25 }}>
+              {quality.lessons}
+            </Typography>
+          </Box>
+        </Box>
+
+        <Typography sx={{ fontSize: 12, fontWeight: 700, color: 'grey.700', mb: 1 }}>
+          פירוט יומי
+        </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {days.map((d) => (
+            <Box
+              key={d.day}
+              sx={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'center', py: 0.5, px: 1, borderRadius: 1.5,
+                background: d.lessons === 0 ? 'transparent' : 'grey.50',
+              }}
+            >
+              <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{dayLabels[d.day]}</Typography>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                {d.lessons === 0 ? (
+                  <Chip size="small" label="חופש" sx={{ height: 18, fontSize: 10 }} />
+                ) : (
+                  <>
+                    <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
+                      {d.lessons} שיעורים · שיעור {d.first}–{d.last}
+                    </Typography>
+                    {d.windows > 0 && (
+                      <Chip size="small" label={`${d.windows} חלון`}
+                            sx={{ height: 18, fontSize: 10, background: 'rgba(245,158,11,0.15)', color: '#b45309' }} />
+                    )}
+                  </>
+                )}
+              </Stack>
+            </Box>
+          ))}
+        </Box>
+
+        {viewMode === 'teacher' && quality.has_day_off && (
+          <Box sx={{ mt: 2, p: 1.25, background: 'grey.50', borderRadius: 1.5 }}>
+            <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
+              יום חופש: {dayLabels[quality.day_off]}
+            </Typography>
+          </Box>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

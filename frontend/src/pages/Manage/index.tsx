@@ -1,21 +1,28 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Alert, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress,
   Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Divider, FormControlLabel, MenuItem, Stack, TextField, Typography,
+  Divider, FormControlLabel, LinearProgress, MenuItem, Stack, TextField,
+  Typography,
 } from '@mui/material';
 import {
+  CloudUpload as UploadIcon,
   Download as DownloadIcon,
   Warning as WarningIcon,
   Delete as DeleteIcon,
   CleaningServices as ClearIcon,
   Block as BlockIcon,
   AdminPanelSettings as ShieldIcon,
+  CheckCircle as CheckIcon,
+  Assessment as ReportIcon,
 } from '@mui/icons-material';
 import {
   bulkDelete, clearTimetableEntries, deleteTimetable, exportExcel,
-  getExportOptions, getTimetables,
+  getExportOptions, getTimetables, uploadExcel, getGapAnalysis,
+  getTimetableQuality,
+  type ImportResponse, type GapAnalysis, type TimetableQuality,
 } from '../../api/client';
 
 // ── catalog of export sheets, with friendly Hebrew labels and a hint of
@@ -35,6 +42,7 @@ const SHEETS: SheetMeta[] = [
   { key: 'assignments', label: 'שיבוצי הוראה', description: 'מי מלמד מה למי וכמה שעות', group: 'master' },
   { key: 'constraints', label: 'אילוצים', description: 'אילוצים מוגדרים: סוג, עדיפות, פרמטרים', group: 'master' },
   { key: 'import_logs', label: 'יומן ייבואים', description: '200 הייבואים האחרונים', group: 'master' },
+  { key: 'roundtrip_haarachot', label: 'הערכות (פורמט מקורי)', description: 'ייצוא חזרה לפורמט הקלט — תפקידים + גיליון לכל מקצוע', group: 'master' },
 
   { key: 'users', label: 'משתמשים', description: 'כל המשתמשים, תפקידים, התחברות אחרונה (super_admin)', group: 'admin' },
   { key: 'audit_logins', label: 'יומן התחברויות', description: '1000 התחברויות אחרונות (super_admin)', group: 'admin' },
@@ -47,27 +55,34 @@ const GROUP_TITLES: Record<SheetMeta['group'], string> = {
   admin: 'ניהול ובקרה',
 };
 
-type TabValue = 'export' | 'manage';
+type TabValue = 'import' | 'export' | 'gaps' | 'quality' | 'manage';
 
 export default function ManagePage() {
   const { t } = useTranslation();
   void t;
-  const [tab, setTab] = useState<TabValue>('export');
+  const [tab, setTab] = useState<TabValue>('import');
 
   return (
     <Box>
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h2" sx={{ mb: 0.5 }}>ייצוא וניהול נתונים</Typography>
+        <Typography variant="h2" sx={{ mb: 0.5 }}>ייבוא, ייצוא וניהול נתונים</Typography>
         <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
-          ייצא את נתוני המערכת לקובץ אקסל, או נקה נתונים. פעולות מחיקה הן בלתי-הפיכות.
+          ייבא את הערכות שעות ההוראה מקובץ אקסל, צפה במצב הנתונים, ייצא נתונים, או נקה.
+          פעולות מחיקה הן בלתי-הפיכות.
         </Typography>
       </Box>
 
       <Box sx={{ display: 'inline-flex', gap: 0.5, padding: 0.5, background: 'grey.100', borderRadius: 3, mb: 3 }}>
+        <PillTab label="ייבוא Excel" active={tab === 'import'} onClick={() => setTab('import')} />
+        <PillTab label="פערי נתונים" active={tab === 'gaps'} onClick={() => setTab('gaps')} />
+        <PillTab label="איכות מערכת" active={tab === 'quality'} onClick={() => setTab('quality')} />
         <PillTab label="ייצוא" active={tab === 'export'} onClick={() => setTab('export')} />
         <PillTab label="ניהול נתונים" active={tab === 'manage'} onClick={() => setTab('manage')} danger />
       </Box>
 
+      {tab === 'import' && <ImportTab />}
+      {tab === 'gaps' && <GapAnalysisTab />}
+      {tab === 'quality' && <QualityTab />}
       {tab === 'export' && <ExportTab />}
       {tab === 'manage' && <ManageTab />}
     </Box>
@@ -540,5 +555,1005 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
     >
       {op.buttonLabel}
     </Button>
+  );
+}
+
+// ── IMPORT TAB ────────────────────────────────────────────────────────────
+
+function ImportTab() {
+  const [file, setFile] = useState<File | null>(null);
+  const [wipeExisting, setWipeExisting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [preview, setPreview] = useState<ImportResponse | null>(null);
+  const [commitResult, setCommitResult] = useState<ImportResponse | null>(null);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setFile(null);
+    setPreview(null);
+    setCommitResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      setFile(f);
+      setPreview(null);
+      setCommitResult(null);
+      setError('');
+    }
+  };
+
+  const doDryRun = async () => {
+    if (!file) return;
+    setPreviewing(true);
+    setError('');
+    setCommitResult(null);
+    try {
+      const res = await uploadExcel(file, 1, { dryRun: true, wipeExisting });
+      setPreview(res.data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'תצוגה מקדימה נכשלה');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const doCommit = async () => {
+    if (!file) return;
+    setCommitting(true);
+    setError('');
+    try {
+      const res = await uploadExcel(file, 1, { dryRun: false, wipeExisting });
+      setCommitResult(res.data);
+      setPreview(null);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'הייבוא נכשל');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const p = preview?.preview;
+
+  return (
+    <Stack spacing={3}>
+      <Alert severity="info">
+        העלאת קובץ Excel בפורמט "הערכות לשנת הלימודים".
+        השלב הראשון הוא <strong>תצוגה מקדימה</strong> ללא שינוי במסד הנתונים —
+        רק לאחר אישור תועלה הגרסה לבסיס הנתונים.
+      </Alert>
+
+      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+
+      <Card>
+        <CardContent>
+          <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>1. בחר קובץ</Typography>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<UploadIcon />}
+              disabled={previewing || committing}
+            >
+              בחר קובץ .xlsx
+              <input
+                hidden
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx"
+                onChange={onPickFile}
+              />
+            </Button>
+            {file && (
+              <>
+                <Typography sx={{ fontSize: 14 }}>{file.name}</Typography>
+                <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
+                  ({(file.size / 1024).toFixed(0)} KB)
+                </Typography>
+                <Button size="small" onClick={reset} disabled={previewing || committing}>
+                  נקה
+                </Button>
+              </>
+            )}
+          </Stack>
+
+          <FormControlLabel
+            sx={{ mt: 2, display: 'block' }}
+            control={
+              <Checkbox
+                size="small"
+                checked={wipeExisting}
+                onChange={(e) => setWipeExisting(e.target.checked)}
+                disabled={previewing || committing}
+              />
+            }
+            label={
+              <Box>
+                <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
+                  מחק נתונים קיימים לפני הייבוא
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
+                  ימחק את כל המורים, המקצועות, שיבוצי ההוראה והתפקידים של בית הספר
+                  לפני ייבוא ה-Excel. הכיתות והגדרות נוספות נשארות.
+                </Typography>
+              </Box>
+            }
+          />
+
+          <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
+            <Button
+              variant="outlined"
+              startIcon={previewing ? <CircularProgress size={16} /> : <ReportIcon />}
+              onClick={doDryRun}
+              disabled={!file || previewing || committing}
+            >
+              תצוגה מקדימה
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {p && (
+        <Card sx={{ borderColor: 'primary.light' }}>
+          <CardContent>
+            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
+              2. סיכום תצוגה מקדימה
+            </Typography>
+            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 2 }}>
+              <Stat label="גיליונות" value={p.sheets_seen.length} />
+              <Stat label="שורות שיבוצים" value={p.assignment_rows_total} />
+              <Stat label="שורות תפקידים" value={p.role_rows_total} />
+              <Stat label="מקצועות" value={p.subjects_distinct} />
+              <Stat label="מורים (ייחודיים)" value={p.teachers_distinct} />
+              <Stat label="שורות עם מורה" value={p.rows_with_teacher} />
+              <Stat label="שורות בקבוצות (pool)" value={p.pool_rows} />
+              <Stat label="שורות פתיחה מותנית" value={p.inactive_rows} />
+            </Stack>
+
+            {Object.keys(p.class_rows_per_grade || {}).length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700' }}>
+                  שורות לפי שכבה
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                  {Object.entries(p.class_rows_per_grade).map(([g, n]) => (
+                    <Chip key={g} size="small" label={`${g}: ${n}`} />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {p.diff && (
+              <Box sx={{ mb: 2, p: 1.5, background: 'rgba(79,70,229,0.04)', borderRadius: 2 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 700, mb: 1 }}>
+                  השוואה למצב הקיים בבסיס הנתונים
+                </Typography>
+                <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 1 }}>
+                  <DiffStat label="מורים חדשים" value={p.diff.new_teachers_count} tone="good" />
+                  <DiffStat label="מורים שיוסרו" value={p.diff.removed_teachers_count} tone={p.diff.removed_teachers_count > 0 ? 'warn' : 'good'} />
+                  <DiffStat label="מקצועות חדשים" value={p.diff.new_subjects.length} tone="good" />
+                  <DiffStat label="כיתות חדשות" value={p.diff.new_classes.length} tone="good" />
+                  <DiffStat label="שורות חדשות" value={p.diff.new_rows_count} tone="good" />
+                  <DiffStat label="שורות בלתי מעודכנות" value={p.diff.stale_rows_count} tone={p.diff.stale_rows_count > 0 ? 'warn' : 'good'} />
+                  <DiffStat label="שינויי שעות" value={p.diff.hours_changes_count} tone={p.diff.hours_changes_count > 0 ? 'warn' : 'good'} />
+                </Stack>
+                {p.diff.new_teachers.length > 0 && (
+                  <Typography sx={{ fontSize: 11, color: 'grey.700' }}>
+                    מורים חדשים: {p.diff.new_teachers.slice(0, 10).join(' · ')}
+                    {p.diff.new_teachers_count > 10 && ` · +${p.diff.new_teachers_count - 10}`}
+                  </Typography>
+                )}
+                {p.diff.hours_changes.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: 'grey.700' }}>
+                      שינויי שעות:
+                    </Typography>
+                    {p.diff.hours_changes.slice(0, 5).map((c, i) => (
+                      <Typography key={i} sx={{ fontSize: 11, color: 'grey.700' }}>
+                        {c.sheet} R{c.row} ({c.teacher} / {c.subject}): {c.old_hours} → <strong>{c.new_hours}</strong>
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {p.warnings.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'warning.dark' }}>
+                  אזהרות ({p.warnings.length})
+                </Typography>
+                <Box sx={{ maxHeight: 160, overflow: 'auto', mt: 0.5, fontSize: 12 }}>
+                  {p.warnings.slice(0, 50).map((w, i) => (
+                    <Typography key={i} sx={{ fontSize: 12, color: 'grey.700' }}>
+                      • {w}
+                    </Typography>
+                  ))}
+                  {p.warnings.length > 50 && (
+                    <Typography sx={{ fontSize: 11, color: 'grey.500' }}>
+                      … +{p.warnings.length - 50} אזהרות נוספות
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {p.errors.length > 0 && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>שגיאות:</Typography>
+                {p.errors.slice(0, 20).map((e, i) => (
+                  <Typography key={i} sx={{ fontSize: 12 }}>• {e}</Typography>
+                ))}
+              </Alert>
+            )}
+
+            <Divider sx={{ my: 2 }} />
+            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
+              3. אישור ייבוא לבסיס הנתונים
+            </Typography>
+            <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>
+              לאחר אישור, הנתונים ייכתבו לבסיס הנתונים. הפעולה אינה הפיכה
+              {wipeExisting && (
+                <strong> ותמחק את כל הנתונים הקיימים לפני ההכנסה</strong>
+              )}.
+            </Typography>
+            <Button
+              variant="contained"
+              color={wipeExisting ? 'error' : 'primary'}
+              size="large"
+              startIcon={committing ? <CircularProgress size={16} color="inherit" /> : <CheckIcon />}
+              onClick={doCommit}
+              disabled={committing}
+            >
+              {committing ? 'מייבא…' : 'אשר ויבא לבסיס נתונים'}
+            </Button>
+            {committing && <LinearProgress sx={{ mt: 1.5 }} />}
+          </CardContent>
+        </Card>
+      )}
+
+      {commitResult && (
+        <Alert severity="success">
+          <Typography sx={{ fontSize: 14, fontWeight: 700 }}>
+            ✓ הייבוא הושלם בהצלחה
+          </Typography>
+          <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: 'wrap', fontSize: 13 }}>
+            <Box>מקצועות שנוספו: <strong>{commitResult.subjects_imported}</strong></Box>
+            <Box>מורים שנוספו: <strong>{commitResult.teachers_imported}</strong></Box>
+            <Box>כיתות שנוספו: <strong>{commitResult.classes_imported}</strong></Box>
+            <Box>שיבוצים: <strong>{commitResult.assignments_imported}</strong></Box>
+            <Box>תפקידים: <strong>{commitResult.roles_imported}</strong></Box>
+          </Stack>
+        </Alert>
+      )}
+    </Stack>
+  );
+}
+
+function DiffStat({ label, value, tone }: {
+  label: string; value: number; tone: 'good' | 'warn';
+}) {
+  const colors = tone === 'good'
+    ? { bg: 'rgba(16,185,129,0.10)', fg: '#047857' }
+    : { bg: 'rgba(245,158,11,0.10)', fg: '#b45309' };
+  return (
+    <Box sx={{
+      px: 1.25, py: 0.75, borderRadius: 2,
+      background: colors.bg, color: colors.fg,
+    }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 700, opacity: 0.85 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{value}</Typography>
+    </Box>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <Box sx={{
+      px: 2, py: 1.25,
+      background: 'grey.50',
+      borderRadius: 2,
+      minWidth: 120,
+    }}>
+      <Typography sx={{ fontSize: 11, color: 'grey.600' }}>{label}</Typography>
+      <Typography sx={{ fontSize: 22, fontWeight: 700 }}>{value}</Typography>
+    </Box>
+  );
+}
+
+// ── GAP ANALYSIS TAB ───────────────────────────────────────────────────────
+
+function GapAnalysisTab() {
+  const [data, setData] = useState<GapAnalysis | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await getGapAnalysis(1);
+      setData(res.data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'טעינת הנתונים נכשלה');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (loading && !data) {
+    return (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return <Alert severity="error">{error}</Alert>;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const overCap = data.teacher_loads.filter((t) => t.over_cap);
+  const underTaught = data.teacher_loads.filter((t) => t.under_must_teach);
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography sx={{ fontSize: 16, fontWeight: 700 }}>סיכום מצב הנתונים</Typography>
+        <Button size="small" onClick={load} disabled={loading}>רענן</Button>
+      </Stack>
+
+      <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+        <GapCard
+          title="כיתות ללא מחנכ/ת"
+          count={data.classes_missing_homeroom_count}
+          severity={data.classes_missing_homeroom_count > 0 ? 'warning' : 'ok'}
+        >
+          {data.classes_missing_homeroom.slice(0, 30).map((c) => (
+            <Chip key={c.id} size="small" label={`${c.grade__name}${c.number}`} sx={{ mr: 0.5, mb: 0.5 }} />
+          ))}
+        </GapCard>
+
+        <GapCard
+          title="שיבוצים ללא מורה"
+          count={data.assignments_without_teacher_count}
+          severity={data.assignments_without_teacher_count > 0 ? 'warning' : 'ok'}
+        >
+          <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
+            {data.assignments_without_teacher_count} שיעורים ללא מורה מוקצה.
+            הסולבר ידלג עליהם.
+          </Typography>
+        </GapCard>
+
+        <GapCard
+          title="מורים מעל מכסה"
+          count={overCap.length}
+          severity={overCap.length > 0 ? 'error' : 'ok'}
+        >
+          {overCap.slice(0, 20).map((t) => (
+            <Typography key={t.id} sx={{ fontSize: 12 }}>
+              {t.name}: {t.assigned_hours}h / מקס {t.cap}h
+            </Typography>
+          ))}
+        </GapCard>
+
+        <GapCard
+          title="מורים פחות מחובת ההוראה"
+          count={underTaught.length}
+          severity={underTaught.length > 0 ? 'warning' : 'ok'}
+        >
+          {underTaught.slice(0, 20).map((t) => (
+            <Typography key={t.id} sx={{ fontSize: 12 }}>
+              {t.name}: {t.assigned_hours}h / חובה {t.must_teach}h
+            </Typography>
+          ))}
+        </GapCard>
+      </Stack>
+
+      <Card>
+        <CardContent>
+          <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>
+            עומס מורים (Top 30)
+          </Typography>
+          <Box sx={{ maxHeight: 480, overflow: 'auto' }}>
+            <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
+              <Box component="thead">
+                <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.5, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700 } }}>
+                  <Box component="th">מורה</Box>
+                  <Box component="th">שעות הוראה</Box>
+                  <Box component="th">שעות תפקיד</Box>
+                  <Box component="th">חובת הוראה</Box>
+                  <Box component="th">מכסה</Box>
+                  <Box component="th">סטטוס</Box>
+                </Box>
+              </Box>
+              <Box component="tbody">
+                {data.teacher_loads.slice(0, 30).map((t) => (
+                  <Box key={t.id} component="tr" sx={{ '& td': { py: 0.5, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
+                    <Box component="td">{t.name}</Box>
+                    <Box component="td">{t.assigned_hours}</Box>
+                    <Box component="td">{t.role_hours}</Box>
+                    <Box component="td">{t.must_teach}</Box>
+                    <Box component="td">{t.cap}</Box>
+                    <Box component="td">
+                      {t.over_cap && <Chip size="small" color="error" label="מעל מכסה" />}
+                      {t.under_must_teach && <Chip size="small" color="warning" label="פחות מחובה" />}
+                      {!t.over_cap && !t.under_must_teach && <Chip size="small" color="success" label="תקין" />}
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    </Stack>
+  );
+}
+
+// ── QUALITY DASHBOARD TAB ─────────────────────────────────────────────────
+
+type TeacherSortKey =
+  | 'name' | 'lessons' | 'windows' | 'long_windows' | 'max_single_gap'
+  | 'days_taught' | 'days_with_windows' | 'longest_teaching_day'
+  | 'max_daily_lessons' | 'avg_daily_lessons' | 'late_period_lessons'
+  | 'first_period_count' | 'distinct_subjects' | 'distinct_classes'
+  | 'bagrut_hours' | 'role_hours' | 'total_contract_hours' | 'utilization_pct';
+
+function QualityTab() {
+  const navigate = useNavigate();
+  const [timetables, setTimetables] = useState<any[]>([]);
+  const [timetableId, setTimetableId] = useState<number | ''>('');
+  const [quality, setQuality] = useState<TimetableQuality | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<TeacherSortKey>('windows');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [minWindowsFilter, setMinWindowsFilter] = useState<number>(0);
+
+  useEffect(() => {
+    getTimetables().then((r) => {
+      const list = r.data.results ?? [];
+      setTimetables(list);
+      if (list.length > 0) setTimetableId(list[0].id);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!timetableId) return;
+    setLoading(true);
+    setError('');
+    getTimetableQuality(timetableId as number)
+      .then((r) => setQuality(r.data))
+      .catch((e) => setError(e.response?.data?.error || 'טעינת הנתונים נכשלה'))
+      .finally(() => setLoading(false));
+  }, [timetableId]);
+
+  const sortedTeachers = useMemo(() => {
+    if (!quality) return [];
+    let list = quality.teachers;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((t) => t.name.toLowerCase().includes(q));
+    }
+    if (minWindowsFilter > 0) {
+      list = list.filter((t) => t.windows >= minWindowsFilter);
+    }
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...list].sort((a: any, b: any) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (typeof av === 'string') return dir * av.localeCompare(bv, 'he');
+      return dir * ((av ?? 0) - (bv ?? 0));
+    });
+  }, [quality, search, sortKey, sortDir, minWindowsFilter]);
+
+  const onSort = (key: TeacherSortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'name' ? 'asc' : 'desc');
+    }
+  };
+
+  const exportCsv = () => {
+    if (!quality) return;
+    const headers = [
+      'שם המורה', 'שעות הוראה', 'שעות בגרות', 'שעות תפקיד',
+      'סך הכל שעות', 'מכסה', 'ניצול (%)',
+      'חלונות', 'חלונות ארוכים', 'פער מקס׳',
+      'ימי הוראה', 'ימים עם חלונות',
+      'יום הוראה ארוך', 'מקס׳ ליום', 'ממוצע ליום',
+      'שיעורים אחרי 8', 'ימים פותחים', 'מקצועות', 'כיתות', 'גמול תפקיד', 'יום חופש',
+    ];
+    const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+    const rows = sortedTeachers.map((t) => [
+      t.name, t.lessons, t.bagrut_hours, t.role_hours,
+      t.total_contract_hours, t.cap, t.utilization_pct,
+      t.windows, t.long_windows, t.max_single_gap,
+      t.days_taught, t.days_with_windows,
+      t.longest_teaching_day, t.max_daily_lessons, t.avg_daily_lessons,
+      t.late_period_lessons, t.first_period_count,
+      t.distinct_subjects, t.distinct_classes, t.stipend_fraction,
+      t.day_off ? dayNames[t.day_off] : '',
+    ]);
+    const csv = '﻿' + [headers, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `teacher_quality_${quality.name.replace(/\s+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading && !quality) {
+    return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
+  }
+
+  return (
+    <Stack spacing={2.5}>
+      <Card>
+        <CardContent>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+            <TextField
+              select size="small"
+              label="מערכת לבדיקה"
+              value={timetableId}
+              onChange={(e) => setTimetableId(Number(e.target.value))}
+              sx={{ minWidth: 320 }}
+            >
+              {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
+              {timetables.map((tt: any) => (
+                <MenuItem key={tt.id} value={tt.id}>
+                  {tt.name} — {tt.academic_year} ({tt.status})
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
+                    disabled={!quality} onClick={exportCsv}>
+              ייצא טבלה ל-CSV
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {error && <Alert severity="error">{error}</Alert>}
+
+      {quality && <DataQualityIssues quality={quality} />}
+
+      {quality && (
+        <>
+          <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+            <QualityMetric label="סך השיעורים" value={quality.totals.entries} tone="primary" />
+            <QualityMetric
+              label="חלונות מורים (סך)"
+              value={quality.totals.total_teacher_windows}
+              hint={`ממוצע ${quality.totals.avg_teacher_windows.toFixed(2)} לכל מורה`}
+              tone={
+                quality.totals.total_teacher_windows < 30 ? 'good'
+                : quality.totals.total_teacher_windows < 100 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
+              label={`חלונות ארוכים (${quality.long_window_threshold}+ שעות)`}
+              value={quality.totals.total_long_windows}
+              hint={`${quality.totals.teachers_with_long_windows} מורים מושפעים`}
+              tone={
+                quality.totals.total_long_windows === 0 ? 'good'
+                : quality.totals.total_long_windows < 5 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
+              label="חלונות כיתות (סך)"
+              value={quality.totals.total_class_windows}
+              hint={`${quality.totals.classes_with_windows} כיתות`}
+              tone={
+                quality.totals.total_class_windows < 10 ? 'good'
+                : quality.totals.total_class_windows < 50 ? 'warn' : 'bad'
+              }
+            />
+            <QualityMetric
+              label="מורים עם חלונות"
+              value={quality.totals.teachers_with_windows}
+              hint={`מתוך ${quality.teachers.length}`}
+            />
+            <QualityMetric
+              label="שיעורים אחרי 8"
+              value={quality.totals.late_period_lessons}
+              tone="warn"
+            />
+          </Stack>
+
+          <Card>
+            <CardContent>
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}
+                     sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between', mb: 2 }}>
+                <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
+                  טבלת מורים — {sortedTeachers.length} מתוך {quality.teachers.length}
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    size="small" placeholder="חיפוש מורה…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    sx={{ width: 200 }}
+                  />
+                  <TextField
+                    select size="small" value={minWindowsFilter}
+                    onChange={(e) => setMinWindowsFilter(Number(e.target.value))}
+                    sx={{ width: 160 }}
+                  >
+                    <MenuItem value={0}>כל המורים</MenuItem>
+                    <MenuItem value={1}>עם 1+ חלונות</MenuItem>
+                    <MenuItem value={3}>עם 3+ חלונות</MenuItem>
+                    <MenuItem value={5}>עם 5+ חלונות</MenuItem>
+                  </TextField>
+                </Stack>
+              </Stack>
+
+              <Box sx={{ overflow: 'auto', maxHeight: 700 }}>
+                <Box component="table" sx={{
+                  width: '100%', fontSize: 12, borderCollapse: 'separate', borderSpacing: 0,
+                }}>
+                  <Box component="thead" sx={{ position: 'sticky', top: 0, zIndex: 2, background: '#fff' }}>
+                    <Box component="tr" sx={{
+                      '& th': {
+                        textAlign: 'right', py: 1, px: 1,
+                        borderBottom: '2px solid', borderColor: 'grey.300',
+                        fontWeight: 700, fontSize: 10, color: 'grey.700',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                        whiteSpace: 'nowrap', cursor: 'pointer',
+                        userSelect: 'none', background: '#fff',
+                      },
+                    }}>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="name" onSort={onSort}>מורה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>שעות הוראה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="bagrut_hours" onSort={onSort}>שעות בגרות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>שעות תפקיד</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="total_contract_hours" onSort={onSort}>סך הכל</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="utilization_pct" onSort={onSort}>ניצול %</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="windows" onSort={onSort}>חלונות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="long_windows" onSort={onSort}>חלונות ארוכים</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_single_gap" onSort={onSort}>פער מקס׳</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="days_taught" onSort={onSort}>ימי הוראה</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="longest_teaching_day" onSort={onSort}>יום ארוך</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_daily_lessons" onSort={onSort}>מקס׳ ליום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="avg_daily_lessons" onSort={onSort}>ממוצע ליום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="late_period_lessons" onSort={onSort}>אחרי 8</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="first_period_count" onSort={onSort}>פותח יום</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_subjects" onSort={onSort}>מקצועות</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_classes" onSort={onSort}>כיתות</SortableTh>
+                      <Box component="th">חופש</Box>
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {sortedTeachers.map((t) => (
+                      <TeacherRow key={t.id} t={t}
+                        onClick={() => navigate(`/timetable?teacher=${t.id}&timetable=${timetableId}`)}
+                      />
+                    ))}
+                    {sortedTeachers.length === 0 && (
+                      <Box component="tr">
+                        <Box component="td" colSpan={15} sx={{ py: 4, textAlign: 'center', color: 'grey.500' }}>
+                          {search ? 'אין תוצאות חיפוש' : '✓ אין מורים שעוברים את הסינון'}
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>כיתות עם חלונות</Typography>
+              <Box sx={{ overflow: 'auto' }}>
+                <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
+                  <Box component="thead">
+                    <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.75, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700, fontSize: 11, color: 'grey.600', textTransform: 'uppercase' } }}>
+                      <Box component="th">כיתה</Box>
+                      <Box component="th">שיעורים</Box>
+                      <Box component="th">חלונות</Box>
+                    </Box>
+                  </Box>
+                  <Box component="tbody">
+                    {quality.classes.filter((c) => c.windows > 0).slice(0, 15).map((c) => (
+                      <Box key={c.id} component="tr" sx={{ '& td': { py: 0.75, borderBottom: '1px solid', borderColor: 'grey.100' } }}>
+                        <Box component="td" sx={{ fontWeight: 600 }}>{c.name}</Box>
+                        <Box component="td">{c.lessons}</Box>
+                        <Box component="td">
+                          <Chip size="small" label={c.windows}
+                                sx={{ height: 18, fontSize: 10,
+                                  background: 'rgba(245,158,11,0.10)', color: '#b45309' }} />
+                        </Box>
+                      </Box>
+                    ))}
+                    {quality.classes.filter((c) => c.windows > 0).length === 0 && (
+                      <Box component="tr">
+                        <Box component="td" colSpan={3} sx={{ py: 3, textAlign: 'center', color: 'grey.500' }}>
+                          ✓ אין חלונות אצל אף כיתה
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </Stack>
+  );
+}
+
+function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
+  const issues = useMemo(() => {
+    const list: Array<{
+      severity: 'error' | 'warning' | 'info';
+      title: string;
+      detail: string;
+    }> = [];
+
+    const overCap = quality.teachers.filter((t) => t.utilization_pct > 100);
+    if (overCap.length > 0) {
+      list.push({
+        severity: 'error',
+        title: `${overCap.length} מורים מעל המכסה (>100% ניצול)`,
+        detail: overCap.slice(0, 5).map((t) =>
+          `${t.name} — ${t.utilization_pct}%`).join(' · ')
+          + (overCap.length > 5 ? ` · +${overCap.length - 5} נוספים` : ''),
+      });
+    }
+
+    const longGaps = quality.teachers.filter((t) => t.long_windows > 0);
+    if (longGaps.length > 0) {
+      list.push({
+        severity: 'error',
+        title: `${longGaps.length} מורים עם חלון של ${quality.long_window_threshold}+ שעות`,
+        detail: longGaps.slice(0, 5).map((t) =>
+          `${t.name} — פער ${t.max_single_gap}`).join(' · '),
+      });
+    }
+
+    const tooFewLessons = quality.classes.filter((c) => c.lessons < 25);
+    if (tooFewLessons.length > 0) {
+      list.push({
+        severity: 'warning',
+        title: `${tooFewLessons.length} כיתות עם פחות מ-25 שיעורים שבועיים`,
+        detail: tooFewLessons.slice(0, 8).map((c) =>
+          `${c.name} (${c.lessons})`).join(' · '),
+      });
+    }
+
+    const tooManyLessons = quality.classes.filter((c) => c.lessons > 45);
+    if (tooManyLessons.length > 0) {
+      list.push({
+        severity: 'warning',
+        title: `${tooManyLessons.length} כיתות עם מעל 45 שיעורים שבועיים`,
+        detail: tooManyLessons.slice(0, 8).map((c) =>
+          `${c.name} (${c.lessons})`).join(' · '),
+      });
+    }
+
+    const teacherSingleClass = quality.teachers.filter(
+      (t) => t.lessons > 10 && t.distinct_classes === 1
+    );
+    if (teacherSingleClass.length > 0) {
+      list.push({
+        severity: 'info',
+        title: `${teacherSingleClass.length} מורים עם 10+ שעות בכיתה אחת בלבד`,
+        detail: 'יש לבדוק אם הנתון נכון (יתכנו בעיות בייבוא)',
+      });
+    }
+
+    return list;
+  }, [quality]);
+
+  if (issues.length === 0) {
+    return (
+      <Alert severity="success" sx={{ mb: 0 }}>
+        ✓ לא נמצאו בעיות בנתונים — המערכת נראית מאוזנת
+      </Alert>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent>
+        <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1.5 }}>
+          בעיות שזוהו ({issues.length})
+        </Typography>
+        <Stack spacing={1}>
+          {issues.map((iss, i) => (
+            <Alert key={i} severity={iss.severity} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+              <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{iss.title}</Typography>
+              <Typography sx={{ fontSize: 12, color: 'grey.700' }}>{iss.detail}</Typography>
+            </Alert>
+          ))}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SortableTh({
+  k, sortKey, sortDir, onSort, children,
+}: {
+  k: TeacherSortKey;
+  sortKey: TeacherSortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (k: TeacherSortKey) => void;
+  children: React.ReactNode;
+}) {
+  const isActive = sortKey === k;
+  const arrow = isActive ? (sortDir === 'asc' ? '↑' : '↓') : '';
+  return (
+    <Box
+      component="th"
+      onClick={() => onSort(k)}
+      sx={{
+        color: isActive ? 'primary.dark' : 'grey.700',
+        '&:hover': { color: 'primary.dark', background: 'grey.50' },
+      }}
+    >
+      {children} {arrow}
+    </Box>
+  );
+}
+
+function TeacherRow({ t, onClick }: {
+  t: import('../../api/client').TeacherQualityRow;
+  onClick?: () => void;
+}) {
+  const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+  // Color the windows cell by severity.
+  const winColor = t.windows === 0 ? 'success.dark'
+    : t.windows >= 5 ? 'error.dark'
+    : t.windows >= 3 ? '#b45309' : '#854d0e';
+  const winBg = t.windows === 0 ? 'rgba(16,185,129,0.10)'
+    : t.windows >= 5 ? 'rgba(244,63,94,0.10)'
+    : t.windows >= 3 ? 'rgba(245,158,11,0.10)' : 'rgba(250,204,21,0.10)';
+
+  const longWinColor = t.long_windows === 0 ? 'success.dark' : 'error.dark';
+  const longWinBg = t.long_windows === 0 ? 'rgba(16,185,129,0.08)' : 'rgba(244,63,94,0.10)';
+
+  // Color the utilization cell by how close to cap it is.
+  const utilColor =
+    t.utilization_pct >= 100 ? 'error.dark'
+    : t.utilization_pct >= 90 ? '#b45309'
+    : t.utilization_pct >= 70 ? 'success.dark' : 'grey.700';
+  const utilBg =
+    t.utilization_pct >= 100 ? 'rgba(244,63,94,0.10)'
+    : t.utilization_pct >= 90 ? 'rgba(245,158,11,0.10)'
+    : t.utilization_pct >= 70 ? 'rgba(16,185,129,0.08)' : 'transparent';
+
+  return (
+    <Box component="tr" onClick={onClick} sx={{
+      '& td': {
+        py: 0.75, px: 1, borderBottom: '1px solid', borderColor: 'grey.100',
+        whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+      },
+      cursor: onClick ? 'pointer' : 'default',
+      '&:hover': { background: 'grey.50' },
+    }}>
+      <Box component="td" sx={{ fontWeight: 600, position: 'sticky', insetInlineStart: 0, background: 'inherit' }}>
+        {t.name}
+      </Box>
+      <Box component="td">{t.lessons}</Box>
+      <Box component="td">{t.bagrut_hours || '—'}</Box>
+      <Box component="td">{t.role_hours || '—'}</Box>
+      <Box component="td" sx={{ fontWeight: 600 }}>{t.total_contract_hours}</Box>
+      <Box component="td">
+        <Chip size="small" label={`${t.utilization_pct}%`}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: utilBg, color: utilColor }} />
+      </Box>
+      <Box component="td">
+        <Chip size="small" label={t.windows}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: winBg, color: winColor }} />
+      </Box>
+      <Box component="td">
+        <Chip size="small" label={t.long_windows}
+              sx={{ height: 20, fontSize: 11, fontWeight: 700,
+                background: longWinBg, color: longWinColor }} />
+      </Box>
+      <Box component="td">{t.max_single_gap || '—'}</Box>
+      <Box component="td">{t.days_taught}</Box>
+      <Box component="td">{t.longest_teaching_day}</Box>
+      <Box component="td">{t.max_daily_lessons}</Box>
+      <Box component="td">{t.avg_daily_lessons.toFixed(1)}</Box>
+      <Box component="td">{t.late_period_lessons || '—'}</Box>
+      <Box component="td">{t.first_period_count}</Box>
+      <Box component="td">{t.distinct_subjects}</Box>
+      <Box component="td">{t.distinct_classes}</Box>
+      <Box component="td">{t.day_off ? dayNames[t.day_off] : '—'}</Box>
+    </Box>
+  );
+}
+
+function QualityMetric({ label, value, hint, tone }: {
+  label: string;
+  value: number;
+  hint?: string;
+  tone?: 'good' | 'warn' | 'bad' | 'primary';
+}) {
+  const palette = {
+    good: { bg: 'rgba(16,185,129,0.10)', fg: '#047857' },
+    warn: { bg: 'rgba(245,158,11,0.10)', fg: '#b45309' },
+    bad: { bg: 'rgba(244,63,94,0.10)', fg: '#be123c' },
+    primary: { bg: 'rgba(79,70,229,0.08)', fg: 'primary.dark' },
+  }[tone || 'good'];
+  return (
+    <Box sx={{
+      flex: '1 1 180px', minWidth: 180,
+      p: 2,
+      borderRadius: 2,
+      background: palette.bg,
+      color: palette.fg,
+    }}>
+      <Typography sx={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', opacity: 0.8 }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: 32, fontWeight: 800, lineHeight: 1, mt: 0.5 }}>
+        {value}
+      </Typography>
+      {hint && (
+        <Typography sx={{ fontSize: 11, opacity: 0.75, mt: 0.5 }}>{hint}</Typography>
+      )}
+    </Box>
+  );
+}
+
+function GapCard({ title, count, severity, children }: {
+  title: string;
+  count: number;
+  severity: 'ok' | 'warning' | 'error';
+  children: React.ReactNode;
+}) {
+  const palette = {
+    ok: { color: 'success.dark', bg: 'success.light' },
+    warning: { color: 'warning.dark', bg: 'warning.light' },
+    error: { color: 'error.dark', bg: 'error.light' },
+  }[severity];
+
+  return (
+    <Card sx={{ flex: '1 1 240px', minWidth: 240 }}>
+      <CardContent>
+        <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{title}</Typography>
+          <Box sx={{
+            px: 1.5, py: 0.25,
+            borderRadius: 99,
+            background: palette.bg,
+            color: palette.color,
+            fontSize: 12,
+            fontWeight: 700,
+          }}>
+            {count}
+          </Box>
+        </Stack>
+        {children}
+      </CardContent>
+    </Card>
   );
 }

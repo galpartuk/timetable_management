@@ -8,6 +8,8 @@ class Constraint(models.Model):
         MAX_DAILY_HOURS_TEACHER = 'max_daily_hours_teacher', 'מקסימום שעות יומי למורה'
         SUBJECT_SPREAD = 'subject_spread', 'פיזור מקצוע לאורך השבוע'
         CONSECUTIVE_HOURS = 'consecutive_hours', 'שיעורים צמודים'
+        CONSECUTIVE_PAIR = 'consecutive_pair', 'זוג שיעורים רצופים'
+        LUNCH_BREAK = 'lunch_break', 'הפסקת אוכל'
         PREFERRED_PERIODS = 'preferred_periods', 'שיעורים מועדפים'
         NO_LAST_PERIOD = 'no_last_period', 'לא בשיעור אחרון'
         CUSTOM = 'custom', 'מותאם אישית'
@@ -93,11 +95,21 @@ class TimetableEntry(models.Model):
         'school.Room', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='timetable_entries',
     )
+    # When True, the next solver run pins this entry to its current
+    # (school_class, time_slot, teacher) — useful for "I like this one,
+    # re-solve everything else around it".
+    locked = models.BooleanField(default=False, verbose_name='נעול')
 
     class Meta:
         verbose_name = 'שיעור במערכת'
         verbose_name_plural = 'שיעורים במערכת'
-        unique_together = ['timetable', 'school_class', 'time_slot']
+        # NOT unique on (timetable, class, slot) — a pooled high-school
+        # lesson (e.g., math) puts several parallel teachers in the same
+        # slot for the same class (each teaching a different ability
+        # track). The minimal unique key is (timetable, class, slot,
+        # teacher): the *same teacher* cannot appear twice in one slot,
+        # but multiple teachers can.
+        unique_together = ['timetable', 'school_class', 'time_slot', 'teacher']
 
     def __str__(self):
         return f'{self.school_class} - {self.subject} - {self.time_slot}'

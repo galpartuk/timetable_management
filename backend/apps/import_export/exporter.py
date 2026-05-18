@@ -386,6 +386,85 @@ def _build_import_logs(wb: Workbook, spec: Dict[str, Any]) -> None:
     ], rows)
 
 
+def _build_roundtrip_haarachot(wb: Workbook, spec: Dict[str, Any]) -> None:
+    """Round-trip export: one sheet per subject in the school's original
+    הערכות format. Lets the school cycle the data back to their Excel-
+    based workflow after we've improved it in the UI.
+
+    Each sheet matches the import format:
+      - Row 1 col B: subject name
+      - Row 3: header row (כיתה / סוג כיתה / שם המורה המלמד / שעות הוראה /
+        שעות גמול בגרות / סמל שאלון בגרות / הערות)
+      - Rows 4+: one row per active TeachingAssignment for the subject
+    """
+    from apps.subjects.models import Subject, TeachingAssignment
+    school_id = spec.get('school_id') or 1
+
+    # תפקידים sheet first.
+    from apps.subjects.models import TeacherRole
+    ws_roles = wb.create_sheet('תפקידים')
+    ws_roles['A1'] = 'שם תפקיד'
+    ws_roles['B1'] = 'הקשר'
+    ws_roles['C1'] = 'תיאור'
+    ws_roles['D1'] = 'מורה'
+    ws_roles['E1'] = 'שעות שבועיות'
+    ws_roles['F1'] = 'גמול תפקיד'
+    ws_roles['G1'] = 'חובת הוראה'
+    _style_header(ws_roles, 1, 7)
+    role_row = 2
+    for r in TeacherRole.objects.filter(school_id=school_id).select_related('teacher'):
+        ws_roles.cell(row=role_row, column=1, value=r.role_title)
+        ws_roles.cell(row=role_row, column=2, value=r.context)
+        ws_roles.cell(row=role_row, column=3, value=r.description)
+        ws_roles.cell(row=role_row, column=4, value=str(r.teacher) if r.teacher else '')
+        ws_roles.cell(row=role_row, column=5, value=float(r.weekly_hours))
+        ws_roles.cell(row=role_row, column=6, value=float(r.stipend_fraction))
+        ws_roles.cell(row=role_row, column=7, value=float(r.must_teach_hours))
+        role_row += 1
+    _autosize(ws_roles)
+
+    # One sheet per subject.
+    for subject in Subject.objects.filter(school_id=school_id).order_by('name_he'):
+        # Sheet titles must be unique and ≤ 31 chars; truncate if needed.
+        sheet_name = subject.name_he[:31]
+        if sheet_name in wb.sheetnames:
+            continue
+        ws = wb.create_sheet(sheet_name)
+        ws['B1'] = subject.name_he
+        ws['A3'] = 'כיתה'
+        ws['B3'] = 'סוג כיתה'
+        ws['C3'] = 'שם המורה המלמד'
+        ws['D3'] = 'שעות הוראה'
+        ws['E3'] = 'שעות גמול בגרות'
+        ws['F3'] = 'סמל שאלון בגרות'
+        ws['G3'] = 'הערות'
+        _style_header(ws, 3, 7)
+        row = 4
+        for a in (
+            TeachingAssignment.objects
+            .filter(subject=subject)
+            .select_related('teacher', 'school_class__grade')
+            .prefetch_related('additional_classes')
+            .order_by('school_class__grade__level', 'school_class__number')
+        ):
+            extras = list(a.additional_classes.values_list('grade__name', 'number'))
+            if extras:
+                cls_label = a.school_class.display_name + ',' + ','.join(
+                    str(n) for _, n in extras
+                )
+            else:
+                cls_label = a.school_class.display_name
+            ws.cell(row=row, column=1, value=cls_label)
+            ws.cell(row=row, column=2, value=a.track_label or '')
+            ws.cell(row=row, column=3, value=str(a.teacher) if a.teacher else '')
+            ws.cell(row=row, column=4, value=float(a.weekly_hours))
+            ws.cell(row=row, column=5, value=float(a.bagrut_bonus_hours))
+            ws.cell(row=row, column=6, value=a.bagrut_exam_code)
+            ws.cell(row=row, column=7, value=a.notes)
+            row += 1
+        _autosize(ws)
+
+
 # ── registry ──────────────────────────────────────────────────────────────
 SHEET_BUILDERS: Dict[str, Callable[[Workbook, Dict[str, Any]], None]] = {
     'timetable_by_class': _build_timetable_by_class,
@@ -403,6 +482,7 @@ SHEET_BUILDERS: Dict[str, Callable[[Workbook, Dict[str, Any]], None]] = {
     'audit_logins': _build_audit_logins,        # super_admin only
     'audit_activities': _build_audit_activities,  # super_admin only
     'users': _build_users,                       # super_admin only
+    'roundtrip_haarachot': _build_roundtrip_haarachot,
 }
 
 SUPER_ADMIN_ONLY_SHEETS = {'audit_logins', 'audit_activities', 'users'}

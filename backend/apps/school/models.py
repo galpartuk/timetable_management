@@ -38,6 +38,14 @@ class SchoolClass(models.Model):
         REGULAR = 'regular', 'רגילה'
         SPECIAL_ED = 'special_ed', 'חינוך מיוחד'
         LEADERSHIP = 'leadership', 'מנהיגות'
+        MOFET_SCIENCE = 'mofet_science', 'מופ"ת מדעית'
+        MOFET_LEADERSHIP = 'mofet_leadership', 'מופ"ת מנהיגות'
+        RESERVE_SCIENCE = 'reserve_science', 'עתודה מדעית'
+        OMETS = 'omets', 'אומ"ץ'
+        MABAR = 'mabar', 'מב"ר'
+        TALM = 'talm', 'תל"מ'
+        ATGAR = 'atgar', 'אתגר'
+        BIOTECH = 'biotech', 'ביוטכנולוגיה'
         OTHER = 'other', 'אחר'
 
     grade = models.ForeignKey(Grade, on_delete=models.CASCADE, related_name='classes')
@@ -46,7 +54,19 @@ class SchoolClass(models.Model):
         max_length=20, choices=ClassType.choices, default=ClassType.REGULAR,
         verbose_name='סוג כיתה',
     )
+    # Verbatim track label from the Excel (e.g., "מופת מדעית ", "אומ"ץ").
+    # Useful for forensics — the canonical class_type uses our enum, but the
+    # importer sometimes sees variants like extra whitespace or quoting.
+    track_label_raw = models.CharField(max_length=80, blank=True, default='', verbose_name='תווית מסלול גולמית')
     student_count = models.PositiveSmallIntegerField(default=0, verbose_name='מספר תלמידים')
+    homeroom_teacher = models.ForeignKey(
+        'subjects.Teacher',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='homeroom_classes',
+        verbose_name='מחנכ/ת',
+    )
 
     class Meta:
         verbose_name = 'כיתה'

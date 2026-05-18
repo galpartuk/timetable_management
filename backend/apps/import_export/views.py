@@ -1,4 +1,5 @@
 import io
+from collections import Counter
 
 from django.db import transaction
 from django.http import HttpResponse
@@ -14,7 +15,7 @@ from apps.subjects.models import Subject, Teacher, TeachingAssignment
 
 from .exporter import SHEET_BUILDERS, SUPER_ADMIN_ONLY_SHEETS, build_workbook
 from .models import ImportLog
-from .parser import parse_timetable_excel
+from .parser import analyze, apply as apply_parsed, parse_timetable_excel
 from .parser_days_off import parse_days_off_excel
 
 
@@ -22,33 +23,204 @@ def _is_super_admin(user) -> bool:
     return getattr(getattr(user, 'profile', None), 'role', None) == 'super_admin'
 
 
+def _diff_against_db(parsed, school) -> dict:
+    """Compare a fresh ParsedWorkbook against the current DB state for
+    one school. Returns counts and small samples of:
+
+      • new_teachers / removed_teachers
+      • new_classes
+      • new_subjects
+      • assignments with changed weekly_hours (key on sheet+row)
+      • assignments in the import not in the DB (will be added)
+      • assignments in the DB not in the import (will linger as stale)
+
+    Used by the dry-run preview screen — shows the user exactly what
+    is going to change before they commit.
+    """
+    from apps.subjects.models import Teacher, Subject, TeachingAssignment
+    from apps.school.models import SchoolClass
+
+    db_teachers = set(Teacher.objects.filter(school=school)
+                      .values_list('first_name', flat=True))
+    db_subjects = set(Subject.objects.filter(school=school)
+                      .values_list('name_he', flat=True))
+    db_class_keys = set(
+        SchoolClass.objects.filter(grade__school=school)
+        .values_list('grade__name', 'number')
+    )
+
+    import_teachers: set[str] = set()
+    import_subjects: set[str] = set()
+    import_class_keys: set[tuple[str, int]] = set()
+    for r in parsed.assignment_rows:
+        if r.teacher:
+            import_teachers.add(r.teacher.strip())
+        import_subjects.add(r.subject)
+        for g, n in r.classes:
+            import_class_keys.add((g, n))
+
+    # Existing assignments keyed by (sheet, row) so we can compare hours.
+    db_hours_by_source = {
+        (a.source_sheet, a.source_row): float(a.weekly_hours or 0)
+        for a in TeachingAssignment.objects.filter(subject__school=school)
+        if a.source_sheet and a.source_row
+    }
+    hours_changes = []
+    new_rows_seen = set()
+    for r in parsed.assignment_rows:
+        if r.weekly_hours is None:
+            continue
+        key = (r.source_sheet, r.source_row)
+        new_rows_seen.add(key)
+        existing = db_hours_by_source.get(key)
+        new_hours = float(r.weekly_hours)
+        if existing is None:
+            continue  # truly new row → covered by `new_rows`
+        if abs(existing - new_hours) > 0.01:
+            hours_changes.append({
+                'sheet': r.source_sheet, 'row': r.source_row,
+                'teacher': r.teacher, 'subject': r.subject,
+                'old_hours': existing, 'new_hours': new_hours,
+            })
+
+    new_rows = [k for k in new_rows_seen if k not in db_hours_by_source]
+    stale_rows = [k for k in db_hours_by_source if k not in new_rows_seen]
+
+    return {
+        'new_teachers': sorted(import_teachers - db_teachers)[:50],
+        'new_teachers_count': len(import_teachers - db_teachers),
+        'removed_teachers': sorted(db_teachers - import_teachers)[:50],
+        'removed_teachers_count': len(db_teachers - import_teachers),
+        'new_subjects': sorted(import_subjects - db_subjects)[:30],
+        'new_classes': sorted([f'{g}{n}' for (g, n) in import_class_keys - db_class_keys])[:30],
+        'new_rows_count': len(new_rows),
+        'stale_rows_count': len(stale_rows),
+        'hours_changes_count': len(hours_changes),
+        'hours_changes': hours_changes[:30],
+    }
+
+
+def _summarize_parsed(parsed) -> dict:
+    """Build a digest shown in the dry-run preview screen."""
+    subjects = Counter(r.subject for r in parsed.assignment_rows)
+    teachers = Counter()
+    class_grade = Counter()
+    rows_with_teacher = 0
+    rows_with_hours = 0
+    pool_rows = 0
+    inactive_rows = 0
+    for r in parsed.assignment_rows:
+        if r.teacher:
+            teachers[r.teacher] += 1
+            rows_with_teacher += 1
+        if r.weekly_hours:
+            rows_with_hours += 1
+        if len(r.classes) > 1:
+            pool_rows += 1
+        if not r.is_active:
+            inactive_rows += 1
+        for g, n in r.classes:
+            class_grade[g] += 1
+
+    role_teachers = Counter(r.teacher for r in parsed.role_rows if r.teacher)
+
+    return {
+        'sheets_seen': parsed.sheets_seen,
+        'assignment_rows_total': len(parsed.assignment_rows),
+        'role_rows_total': len(parsed.role_rows),
+        'subjects_distinct': len(subjects),
+        'teachers_distinct': len(teachers | role_teachers),
+        'rows_with_teacher': rows_with_teacher,
+        'rows_with_hours': rows_with_hours,
+        'pool_rows': pool_rows,
+        'inactive_rows': inactive_rows,
+        'class_rows_per_grade': dict(class_grade),
+        'top_subjects': subjects.most_common(15),
+        'top_teachers': teachers.most_common(15),
+        'warnings': parsed.warnings,
+        'errors': parsed.errors,
+    }
+
+
 @api_view(['POST'])
 @parser_classes([MultiPartParser])
 def upload_excel(request):
+    """Parse + commit. If ``dry_run=true``, only the preview is built and
+    the row is stored with status=PREVIEW for the FE to confirm later.
+
+    Body (multipart):
+      file: the .xlsx
+      school_id: int
+      dry_run: 'true' / 'false' (default false)
+      wipe_existing: 'true' / 'false' (default false) — clears all teaching
+        data for the school before importing. Use sparingly.
+    """
     file = request.FILES.get('file')
     school_id = request.data.get('school_id')
+    dry_run = (request.data.get('dry_run') or '').lower() == 'true'
+    wipe = (request.data.get('wipe_existing') or '').lower() == 'true'
 
     if not file:
         return Response({'error': 'לא נבחר קובץ'}, status=status.HTTP_400_BAD_REQUEST)
     if not school_id:
         return Response({'error': 'לא נבחר בית ספר'}, status=status.HTTP_400_BAD_REQUEST)
+    school = School.objects.filter(id=school_id).first()
+    if not school:
+        return Response({'error': f'בית ספר {school_id} לא נמצא'}, status=status.HTTP_404_NOT_FOUND)
 
     import_log = ImportLog.objects.create(
-        school_id=school_id,
+        school=school,
         file_name=file.name,
         status=ImportLog.Status.PROCESSING,
+        is_dry_run=dry_run,
     )
 
     try:
-        result = parse_timetable_excel(file, school_id, import_log)
+        # Phase 1: analyze (no DB writes).
+        parsed = analyze(file, file_name=file.name)
+        preview = _summarize_parsed(parsed)
+        preview['diff'] = _diff_against_db(parsed, school)
+        import_log.preview_data = preview
+        import_log.warnings = parsed.warnings
+        import_log.errors = parsed.errors
+
+        if dry_run:
+            import_log.status = ImportLog.Status.PREVIEW
+            import_log.save()
+            return Response({
+                'message': 'תצוגה מקדימה הוכנה — אישור נדרש לייבוא בפועל',
+                'log_id': import_log.id,
+                'preview': preview,
+                'dry_run': True,
+            })
+
+        # Phase 2: commit.
+        result = apply_parsed(parsed, school, wipe_existing=wipe)
+        import_log.subjects_imported = result.subjects_created
+        import_log.teachers_imported = result.teachers_created
+        import_log.classes_imported = result.classes_created
+        import_log.assignments_imported = result.assignments_created + result.assignments_updated
+        import_log.roles_imported = result.roles_created
+        import_log.warnings = result.warnings
+        import_log.errors = result.errors
+        import_log.details = {
+            'assignments_created': result.assignments_created,
+            'assignments_updated': result.assignments_updated,
+            'sheets_seen': parsed.sheets_seen,
+        }
         import_log.status = ImportLog.Status.COMPLETED
         import_log.save()
         return Response({
             'message': 'הייבוא הושלם בהצלחה',
+            'log_id': import_log.id,
             'subjects_imported': import_log.subjects_imported,
             'teachers_imported': import_log.teachers_imported,
+            'classes_imported': import_log.classes_imported,
             'assignments_imported': import_log.assignments_imported,
+            'roles_imported': import_log.roles_imported,
+            'warnings': import_log.warnings,
             'errors': import_log.errors,
+            'preview': preview,
         })
     except Exception as e:
         import_log.status = ImportLog.Status.FAILED
@@ -99,13 +271,95 @@ def import_logs(request):
         'id': log.id,
         'file_name': log.file_name,
         'status': log.status,
+        'is_dry_run': log.is_dry_run,
         'uploaded_at': log.uploaded_at,
         'subjects_imported': log.subjects_imported,
         'teachers_imported': log.teachers_imported,
+        'classes_imported': log.classes_imported,
         'assignments_imported': log.assignments_imported,
+        'roles_imported': log.roles_imported,
+        'warnings': log.warnings,
         'errors': log.errors,
     } for log in logs[:20]]
     return Response(data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def gap_analysis(request):
+    """Snapshot of "what's missing for a feasible timetable".
+
+    Returns counts and lists of:
+      • classes with no homeroom teacher
+      • subject deliveries with no teacher (TBD)
+      • subject deliveries with no hours
+      • teacher hour load vs their cap
+      • teacher hours that overlap their role's must_teach floor
+
+    The FE shows this on the Manage page so the school can fix the gaps
+    before running the solver.
+    """
+    from apps.school.models import SchoolClass
+    from apps.subjects.models import Teacher, TeacherRole
+    from django.db.models import Sum, Count
+
+    school_id = int(request.query_params.get('school_id') or 1)
+
+    classes_missing_homeroom = list(
+        SchoolClass.objects.filter(
+            grade__school_id=school_id, homeroom_teacher__isnull=True,
+        ).select_related('grade').values('id', 'grade__name', 'number')
+    )
+
+    assignments_without_teacher = list(
+        TeachingAssignment.objects.filter(
+            subject__school_id=school_id, teacher__isnull=True, is_active=True,
+        ).select_related('subject', 'school_class__grade').values(
+            'id', 'subject__name_he', 'school_class__grade__name',
+            'school_class__number', 'weekly_hours', 'track_label',
+        )[:200]
+    )
+
+    assignments_without_hours = list(
+        TeachingAssignment.objects.filter(
+            subject__school_id=school_id, weekly_hours=0,
+        ).values('id', 'subject__name_he', 'school_class__grade__name',
+                 'school_class__number')[:200]
+    )
+
+    from django.db.models import Q
+    teacher_loads = []
+    # Only active assignments count toward the load — inactive ones are
+    # "פתיחה מותנית" (conditional) and shouldn't pressure the cap.
+    for t in Teacher.objects.filter(school_id=school_id).annotate(
+        load=Sum('assignments__weekly_hours', filter=Q(assignments__is_active=True)),
+        role_hours=Sum('roles__weekly_hours'),
+        must_teach=Sum('roles__must_teach_hours'),
+    ).order_by('-load'):
+        teacher_loads.append({
+            'id': t.id,
+            'name': str(t),
+            'assigned_hours': float(t.load or 0),
+            'role_hours': float(t.role_hours or 0),
+            'must_teach': float(t.must_teach or 0),
+            'cap': t.max_weekly_hours,
+            'over_cap': (float(t.load or 0) > t.max_weekly_hours),
+            'under_must_teach': (
+                float(t.must_teach or 0) > 0
+                and float(t.load or 0) < float(t.must_teach or 0)
+            ),
+        })
+
+    return Response({
+        'school_id': school_id,
+        'classes_missing_homeroom': classes_missing_homeroom,
+        'classes_missing_homeroom_count': len(classes_missing_homeroom),
+        'assignments_without_teacher': assignments_without_teacher,
+        'assignments_without_teacher_count': len(assignments_without_teacher),
+        'assignments_without_hours': assignments_without_hours,
+        'assignments_without_hours_count': len(assignments_without_hours),
+        'teacher_loads': teacher_loads,
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────

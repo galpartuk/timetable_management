@@ -16,43 +16,78 @@ type Field =
   | { kind: 'teacher'; required?: boolean; allowAll?: boolean }
   | { kind: 'subject'; required?: boolean; allowAll?: boolean }
   | { kind: 'class'; required?: boolean; allowAll?: boolean }
-  | { kind: 'param'; key: string; labelKey: string; type: 'number'; default: number };
+  | { kind: 'param'; key: string; labelKey: string; type: 'number' | 'periods'; default: any };
 
 interface TypeSchema {
   value: string;
-  labelKey: string;
+  labelHe: string;
+  description?: string;
   fields: Field[];
 }
 
 const TYPE_SCHEMAS: TypeSchema[] = [
   {
     value: 'max_daily_hours_class',
-    labelKey: 'constraints.maxDailyClass',
+    labelHe: 'מקסימום שעות ביום לכיתה',
+    description: 'הגבלת שיעורים יומיים לכל כיתה (או כיתה ספציפית).',
     fields: [
       { kind: 'class', allowAll: true },
-      { kind: 'param', key: 'max_hours', labelKey: 'constraints.maxHours', type: 'number', default: 8 },
+      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', type: 'number', default: 8 },
     ],
   },
   {
     value: 'max_daily_hours_teacher',
-    labelKey: 'constraints.maxDailyTeacher',
+    labelHe: 'מקסימום שעות ביום למורה',
+    description: 'הגבלת שיעורים יומיים לכל מורה (או מורה ספציפי).',
     fields: [
       { kind: 'teacher', allowAll: true },
-      { kind: 'param', key: 'max_hours', labelKey: 'constraints.maxHours', type: 'number', default: 6 },
+      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', type: 'number', default: 6 },
     ],
   },
   {
     value: 'consecutive_hours',
-    labelKey: 'constraints.maxPerDaySubject',
+    labelHe: 'מקסימום שעות מקצוע ליום',
+    description: 'כמה שיעורים של מקצוע יכולים להיות באותו יום באותה כיתה.',
     fields: [
       { kind: 'class', allowAll: true },
       { kind: 'subject', allowAll: true },
-      { kind: 'param', key: 'max_per_day', labelKey: 'constraints.maxPerDay', type: 'number', default: 2 },
+      { kind: 'param', key: 'max_per_day', labelKey: 'מקס׳ ליום', type: 'number', default: 2 },
+    ],
+  },
+  {
+    value: 'consecutive_pair',
+    labelHe: 'זוג שיעורים רצופים',
+    description: 'כופה שלפחות N שיעורים של (כיתה, מקצוע) יהיו רצופים בלוח. שימושי למתמטיקה ומעבדות.',
+    fields: [
+      { kind: 'class', required: true },
+      { kind: 'subject', required: true },
+      { kind: 'param', key: 'min_pairs', labelKey: 'מינ׳ זוגות', type: 'number', default: 1 },
+    ],
+  },
+  {
+    value: 'lunch_break',
+    labelHe: 'הפסקת אוכל',
+    description: 'שעה אחת או יותר ביום שלא יוקצו לה שיעורים. לדוגמה: שעה 5.',
+    fields: [
+      { kind: 'class', allowAll: true },
+      { kind: 'param', key: 'periods', labelKey: 'שעות הפנויות (CSV)', type: 'periods', default: '5' },
+    ],
+  },
+  {
+    value: 'no_last_period',
+    labelHe: 'לא בשיעור אחרון',
+    description: 'אסור לחבב שיעורים בשעות 9-10 של היום.',
+    fields: [
+      { kind: 'class', allowAll: true },
+      { kind: 'subject', allowAll: true },
+      { kind: 'teacher', allowAll: true },
+      { kind: 'param', key: 'periods', labelKey: 'שעות אסורות (CSV)', type: 'periods', default: '10' },
     ],
   },
   {
     value: 'teacher_availability',
-    labelKey: 'constraints.teacherAvailability',
+    labelHe: 'זמינות מורה',
+    description: 'חסום זמנים ספציפיים בהם המורה לא יכול ללמד.',
     fields: [{ kind: 'teacher', required: true }],
   },
 ];
@@ -253,7 +288,7 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
             onChange={(e) => switchType(e.target.value)}
           >
             {TYPE_SCHEMAS.map((s) => (
-              <MenuItem key={s.value} value={s.value}>{t(s.labelKey)}</MenuItem>
+              <MenuItem key={s.value} value={s.value}>{s.labelHe}</MenuItem>
             ))}
           </TextField>
           <TextField
@@ -299,9 +334,34 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
   const allLabel = t('constraints.all');
 
   if (field.kind === 'param') {
+    if (field.type === 'periods') {
+      // CSV of integers, e.g., "5,6" — translate to array on save.
+      return (
+        <TextField
+          fullWidth label={field.labelKey}
+          helperText="הקלד מספרים מופרדים בפסיק. דוגמה: 5,6"
+          value={
+            Array.isArray(form.parameters[field.key])
+              ? form.parameters[field.key].join(',')
+              : (form.parameters[field.key] ?? field.default)
+          }
+          onChange={(e) => {
+            const raw = e.target.value;
+            const parsed = raw
+              .split(',')
+              .map((x) => parseInt(x.trim(), 10))
+              .filter((n) => !Number.isNaN(n));
+            setForm({
+              ...form,
+              parameters: { ...form.parameters, [field.key]: parsed.length ? parsed : raw },
+            });
+          }}
+        />
+      );
+    }
     return (
       <TextField
-        fullWidth type="number" label={t(field.labelKey)}
+        fullWidth type="number" label={field.labelKey}
         value={form.parameters[field.key] ?? field.default}
         onChange={(e) => setForm({
           ...form,

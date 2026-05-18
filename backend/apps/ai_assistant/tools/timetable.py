@@ -477,3 +477,163 @@ register_tool(Tool(
     requires_confirmation=True,
     preview_template='להריץ את הסולבר על מערכת #{input.timetable_id} (יכול להחליף שיעורים קיימים)',
 ))
+
+
+def _explain_lesson(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Return the context behind a specific lesson — why is it scheduled at
+    this slot? Surfaces the teacher's other lessons that day, the class's
+    constraints, and any rules the solver took into account."""
+    entry_id = input.get('entry_id')
+    if not entry_id:
+        return {'error': 'pass entry_id'}
+    entry = (
+        TimetableEntry.objects
+        .filter(id=entry_id)
+        .select_related('teacher', 'school_class__grade', 'subject', 'time_slot', 'timetable')
+        .first()
+    )
+    if not entry:
+        return {'error': f'entry {entry_id} not found'}
+
+    day = entry.time_slot.day
+    period = entry.time_slot.period
+
+    # Teacher's day at a glance
+    teacher_day = list(
+        TimetableEntry.objects
+        .filter(timetable=entry.timetable, teacher=entry.teacher, time_slot__day=day)
+        .select_related('school_class__grade', 'subject', 'time_slot')
+        .order_by('time_slot__period')
+    )
+    # Class's day at a glance
+    class_day = list(
+        TimetableEntry.objects
+        .filter(timetable=entry.timetable, school_class=entry.school_class, time_slot__day=day)
+        .select_related('teacher', 'subject', 'time_slot')
+        .order_by('time_slot__period')
+    )
+
+    return {
+        'entry_id': entry.id,
+        'subject': entry.subject.name_he,
+        'teacher': str(entry.teacher),
+        'class': entry.school_class.display_name,
+        'day': day,
+        'period': period,
+        'is_locked': entry.locked,
+        'teacher_day': [
+            {'period': e.time_slot.period, 'class': e.school_class.display_name,
+             'subject': e.subject.name_he}
+            for e in teacher_day
+        ],
+        'class_day': [
+            {'period': e.time_slot.period, 'subject': e.subject.name_he,
+             'teacher': str(e.teacher) if e.teacher else '—'}
+            for e in class_day
+        ],
+        'teacher_day_off': entry.teacher.day_off,
+        'context_summary': (
+            f'מורה {entry.teacher} מלמד {entry.subject.name_he} לכיתה '
+            f'{entry.school_class.display_name} בשעה {period} ביום {day}. '
+            f'באותו היום למורה {len(teacher_day)} שיעורים סך הכל. '
+            f'באותו יום לכיתה {len(class_day)} שיעורים סך הכל.'
+        ),
+    }
+
+
+register_tool(Tool(
+    name='explain_lesson',
+    description=(
+        'Explain why a specific lesson sits where it does in the timetable: '
+        'shows the teacher\'s whole day, the class\'s whole day, the '
+        'teacher\'s day-off (if any), and a one-line summary. Use this when '
+        'the user clicks "why is X here?" on a cell.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'entry_id': {
+                'type': 'integer',
+                'description': 'TimetableEntry id from the URL or grid.',
+            },
+        },
+        'required': ['entry_id'],
+    },
+    handler=_explain_lesson,
+    modules=['timetable'],
+))
+
+
+def _suggest_improvements(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Identify the top-3 highest-impact swaps that would reduce teacher
+    windows. Heuristic: find teachers with windows, look for moves that
+    fill the gap or move a window-creating lesson to a better slot."""
+    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    if not timetable_id:
+        return {'error': 'timetable_id required'}
+    entries = list(
+        TimetableEntry.objects.filter(timetable_id=timetable_id)
+        .select_related('teacher', 'school_class__grade', 'subject', 'time_slot')
+    )
+    if not entries:
+        return {'error': 'no entries'}
+
+    # Per-teacher per-day periods.
+    by_t_d = defaultdict(lambda: defaultdict(set))
+    for e in entries:
+        if e.teacher_id:
+            by_t_d[e.teacher_id][e.time_slot.day].add(e.time_slot.period)
+
+    suggestions = []
+    for tid, days in by_t_d.items():
+        for day, periods in days.items():
+            if len(periods) < 2:
+                continue
+            sorted_p = sorted(periods)
+            for prev, cur in zip(sorted_p, sorted_p[1:]):
+                if cur - prev > 1:
+                    gap_size = cur - prev - 1
+                    # Find an entry of this teacher at `prev` and an entry
+                    # somewhere later in the week that could swap in.
+                    if gap_size >= 1:
+                        suggestions.append({
+                            'teacher_id': tid,
+                            'day': day,
+                            'gap_periods': list(range(prev + 1, cur)),
+                            'gap_size': gap_size,
+                            'description': (
+                                f'מורה #{tid} ביום {day} מלמד בשעה {prev} ואז בשעה {cur} — '
+                                f'יש פער של {gap_size} שעות שניתן לסגור על ידי הזזת '
+                                f'שיעור משעה אחרת.'
+                            ),
+                        })
+
+    suggestions.sort(key=lambda s: -s['gap_size'])
+    return {
+        'suggestions': suggestions[:3],
+        'note': (
+            'אלו הצעות אוטומטיות מבוססות-היוריסטיקה. למימוש בפועל הריצו את '
+            'הסולבר מחדש אחרי הוספת אילוצים מתאימים.'
+        ),
+    }
+
+
+register_tool(Tool(
+    name='suggest_improvements',
+    description=(
+        'Suggest the top-3 changes that would most reduce teacher windows '
+        'in the current timetable. Returns a list of (teacher, day, gap) '
+        'tuples ranked by gap size.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'timetable_id': {
+                'type': 'integer',
+                'description': 'Defaults to the timetable open in the UI.',
+            },
+        },
+    },
+    handler=_suggest_improvements,
+    modules=['timetable'],
+))

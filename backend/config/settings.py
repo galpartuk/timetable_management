@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # Third party
     'rest_framework',
+    'rest_framework.authtoken',  # mobile app token-based auth
     'corsheaders',
     'django_filters',
     # Local apps
@@ -113,6 +114,10 @@ CSRF_TRUSTED_ORIGINS = [
 # DRF
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        # TokenAuthentication first so mobile clients sending
+        # `Authorization: Token <key>` are recognized; SessionAuthentication
+        # still handles the web app's cookie-based sessions.
+        'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [

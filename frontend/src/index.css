@@ -175,3 +175,53 @@ body {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
+
+/* Mobile-friendly page titles — keep them readable on phones without
+   shrinking everything else. The grid keeps horizontal scroll via the
+   parent's overflow:auto; cells stay at full readable size. */
+@media (max-width: 640px) {
+  .MuiTypography-h2 {
+    font-size: 1.35rem !important;
+  }
+  .MuiTypography-h3 {
+    font-size: 1.15rem !important;
+  }
+}
+
+/* Print-friendly layout. The browser's native Print dialog reformats
+   the page using these rules so the timetable fits A4 cleanly:
+   - Hide chrome (sidebar, header, action buttons, ai-assistant)
+   - Drop the dense card backgrounds; print directly on white
+   - Force the timetable grid to span the full page width
+   - Force colors to render (some browsers skip backgrounds by default) */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+  body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* Hide everything tagged no-print, plus all common app chrome. */
+  .no-print,
+  nav,
+  aside,
+  header.MuiPaper-root,
+  .MuiDrawer-root,
+  [role='navigation'],
+  [data-print-hide='true'] {
+    display: none !important;
+  }
+  /* Strip shadows + outlines */
+  .MuiCard-root,
+  .MuiPaper-root {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+  }
+  /* Make sure the timetable grid prints in color (windows, subject blocks). */
+  * {
+    overflow: visible !important;
+  }
+}
