@@ -1,6 +1,9 @@
 from rest_framework import viewsets
-from .models import Subject, Teacher, TeachingAssignment
-from .serializers import SubjectSerializer, TeacherSerializer, TeachingAssignmentSerializer
+from .models import Subject, Teacher, TeacherTag, TeachingAssignment
+from .serializers import (
+    SubjectSerializer, TeacherSerializer, TeacherTagSerializer,
+    TeachingAssignmentSerializer,
+)
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
@@ -11,10 +14,17 @@ class SubjectViewSet(viewsets.ModelViewSet):
 
 
 class TeacherViewSet(viewsets.ModelViewSet):
-    queryset = Teacher.objects.all()
+    queryset = Teacher.objects.prefetch_related('tags').all()
     serializer_class = TeacherSerializer
-    filterset_fields = ['school']
+    filterset_fields = ['school', 'tags']
     search_fields = ['first_name', 'last_name']
+
+
+class TeacherTagViewSet(viewsets.ModelViewSet):
+    queryset = TeacherTag.objects.all()
+    serializer_class = TeacherTagSerializer
+    filterset_fields = ['school']
+    search_fields = ['name']
 
 
 class TeachingAssignmentViewSet(viewsets.ModelViewSet):

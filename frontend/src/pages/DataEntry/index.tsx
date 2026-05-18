@@ -4,11 +4,12 @@ import {
   Box, Typography, Card, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, IconButton, Button,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Select,
-  Stack, Avatar,
+  Stack, Avatar, Chip, Menu,
 } from '@mui/material';
-import { Add, Edit, Delete, UploadFile, People as PeopleIcon } from '@mui/icons-material';
+import { Add, Edit, Delete, UploadFile, People as PeopleIcon, LocalOffer as TagIcon } from '@mui/icons-material';
 import {
   getTeachers, createTeacher, updateTeacher, deleteTeacher,
+  getTeacherTags,
   getSubjects, createSubject, updateSubject, deleteSubject,
   getClasses, getAssignments, uploadDaysOff,
 } from '../../api/client';
@@ -37,6 +38,7 @@ export default function DataEntry() {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [tags, setTags] = useState<any[]>([]);
   const [editDialog, setEditDialog] = useState<{ type: string; data: any } | null>(null);
   const isRtl = i18n.language === 'he';
 
@@ -45,6 +47,7 @@ export default function DataEntry() {
     getSubjects().then((r) => setSubjects(r.data.results ?? [])).catch(() => {});
     getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {});
     getAssignments().then((r) => setAssignments(r.data.results ?? [])).catch(() => {});
+    getTeacherTags().then((r: any) => setTags(r.data.results ?? [])).catch(() => {});
   };
 
   useEffect(loadData, []);
@@ -53,6 +56,16 @@ export default function DataEntry() {
     if (data.id) await updateTeacher(data.id, data);
     else await createTeacher({ ...data, school: 1 });
     setEditDialog(null);
+    loadData();
+  };
+
+  // Quick toggle: add/remove a tag on a teacher from the row chip ×.
+  const handleToggleTag = async (teacher: any, tagId: number) => {
+    const current: number[] = teacher.tags ?? [];
+    const next = current.includes(tagId)
+      ? current.filter((t) => t !== tagId)
+      : [...current, tagId];
+    await updateTeacher(teacher.id, { ...teacher, tags: next });
     loadData();
   };
 
@@ -216,6 +229,7 @@ export default function DataEntry() {
                   <TableRow>
                     <TableCell>{t('teacher.firstName')}</TableCell>
                     <TableCell>{t('teacher.lastName')}</TableCell>
+                    <TableCell>{isRtl ? 'תגיות' : 'Tags'}</TableCell>
                     <TableCell>{t('teacher.email')}</TableCell>
                     <TableCell>{t('teacher.phone')}</TableCell>
                     <TableCell>{t('teacher.maxHours')}</TableCell>
@@ -237,6 +251,13 @@ export default function DataEntry() {
                         </Stack>
                       </TableCell>
                       <TableCell>{teacher.last_name}</TableCell>
+                      <TableCell>
+                        <TagsCell
+                          teacher={teacher}
+                          allTags={tags}
+                          onToggle={(tagId) => handleToggleTag(teacher, tagId)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <Typography sx={{ fontSize: 13, color: 'grey.600' }}>{teacher.email}</Typography>
                       </TableCell>
@@ -278,7 +299,7 @@ export default function DataEntry() {
                   ))}
                   {teachers.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} sx={{ borderBottom: 0 }}>
+                      <TableCell colSpan={8} sx={{ borderBottom: 0 }}>
                         <EmptyTable
                           icon={<PeopleIcon />}
                           title={t('data.noData')}
@@ -596,5 +617,47 @@ function SubjectDialog({ data, onSave, onClose }: { data: any; onSave: (d: any) 
         <Button variant="contained" onClick={() => onSave(form)}>{t('data.save')}</Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+function TagsCell({ teacher, allTags, onToggle }: {
+  teacher: any;
+  allTags: any[];
+  onToggle: (tagId: number) => void;
+}) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const assignedIds: number[] = teacher.tags ?? [];
+  const assigned = allTags.filter((t) => assignedIds.includes(t.id));
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5, alignItems: 'center' }}>
+      {assigned.map((tag) => (
+        <Chip
+          key={tag.id}
+          size="small"
+          label={tag.name}
+          sx={{ bgcolor: tag.color + '22', color: tag.color, fontWeight: 600 }}
+          onDelete={() => onToggle(tag.id)}
+        />
+      ))}
+      <IconButton size="small" onClick={(e) => setAnchor(e.currentTarget)} sx={{ color: 'grey.500' }}>
+        <TagIcon fontSize="small" />
+      </IconButton>
+      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
+        {allTags.length === 0 && <MenuItem disabled>אין תגיות זמינות</MenuItem>}
+        {allTags.map((tag) => {
+          const on = assignedIds.includes(tag.id);
+          return (
+            <MenuItem key={tag.id} onClick={() => { onToggle(tag.id); setAnchor(null); }}>
+              <Chip
+                size="small"
+                label={tag.name}
+                sx={{ bgcolor: tag.color + '22', color: tag.color, fontWeight: 600, mr: 1 }}
+              />
+              {on ? '✓' : '+'}
+            </MenuItem>
+          );
+        })}
+      </Menu>
+    </Stack>
   );
 }

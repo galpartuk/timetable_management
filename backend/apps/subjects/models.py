@@ -26,6 +26,31 @@ class Subject(models.Model):
         return self.name_he
 
 
+class TeacherTag(models.Model):
+    """A user-defined label that groups teachers, e.g. "6th-grade staff",
+    "math department". Used by Constraint(GROUP_BLOCKED_SLOT) so an admin
+    can say "everyone in the math department is in a meeting Tuesday at
+    period 1" and the solver leaves those slots empty for all of them."""
+
+    school = models.ForeignKey('school.School', on_delete=models.CASCADE, related_name='teacher_tags')
+    name = models.CharField(max_length=80, verbose_name='שם תגית')
+    color = models.CharField(max_length=7, default='#6366F1', verbose_name='צבע')
+
+    class Meta:
+        verbose_name = 'תגית מורים'
+        verbose_name_plural = 'תגיות מורים'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['school', 'name'],
+                name='teacher_tag_school_name_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Teacher(models.Model):
     class Day(models.IntegerChoices):
         SUNDAY = 1, 'ראשון'
@@ -42,6 +67,9 @@ class Teacher(models.Model):
     max_weekly_hours = models.PositiveSmallIntegerField(default=40, verbose_name='שעות שבועיות מקסימום')
     day_off = models.IntegerField(
         choices=Day.choices, null=True, blank=True, verbose_name='יום חופש',
+    )
+    tags = models.ManyToManyField(
+        TeacherTag, blank=True, related_name='teachers', verbose_name='תגיות',
     )
 
     class Meta:

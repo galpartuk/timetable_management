@@ -103,6 +103,15 @@ export const createTeacher = (data: any) => api.post('/teachers/', data);
 export const updateTeacher = (id: number, data: any) => api.put(`/teachers/${id}/`, data);
 export const deleteTeacher = (id: number) => api.delete(`/teachers/${id}/`);
 
+// Teacher tags — labels you can attach to teachers and then reference
+// from constraints (e.g., "weekly meeting Tuesday at period 1 for the
+// math department").
+export const getTeacherTags = (schoolId?: number) =>
+  api.get('/teacher-tags/', { params: schoolId ? { school: schoolId } : {} });
+export const createTeacherTag = (data: any) => api.post('/teacher-tags/', data);
+export const updateTeacherTag = (id: number, data: any) => api.put(`/teacher-tags/${id}/`, data);
+export const deleteTeacherTag = (id: number) => api.delete(`/teacher-tags/${id}/`);
+
 // Assignments
 export const getAssignments = (params?: any) => api.get('/assignments/', { params });
 export const createAssignment = (data: any) => api.post('/assignments/', data);

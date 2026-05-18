@@ -9,14 +9,15 @@ import {
 import { Add, Delete, Rule as RuleIcon } from '@mui/icons-material';
 import {
   getConstraints, createConstraint, updateConstraint, deleteConstraint,
-  getTeachers, getSubjects, getClasses,
+  getTeachers, getSubjects, getClasses, getTeacherTags,
 } from '../../api/client';
 
 type Field =
   | { kind: 'teacher'; required?: boolean; allowAll?: boolean }
   | { kind: 'subject'; required?: boolean; allowAll?: boolean }
   | { kind: 'class'; required?: boolean; allowAll?: boolean }
-  | { kind: 'param'; key: string; labelKey: string; type: 'number' | 'periods'; default: any };
+  | { kind: 'tag'; required?: boolean }
+  | { kind: 'param'; key: string; labelKey: string; type: 'number' | 'periods' | 'day'; default: any };
 
 interface TypeSchema {
   value: string;
@@ -90,6 +91,16 @@ const TYPE_SCHEMAS: TypeSchema[] = [
     description: 'חסום זמנים ספציפיים בהם המורה לא יכול ללמד.',
     fields: [{ kind: 'teacher', required: true }],
   },
+  {
+    value: 'group_blocked_slot',
+    labelHe: 'פגישת קבוצה (חסימת תגית)',
+    description: 'חסום קבוצת מורים (תגית) ביום ושעות ספציפיים — מתאים לפגישות צוות שבועיות.',
+    fields: [
+      { kind: 'tag', required: true },
+      { kind: 'param', key: 'day', labelKey: 'יום בשבוע', type: 'day', default: 3 },
+      { kind: 'param', key: 'periods', labelKey: 'שעות (CSV)', type: 'periods', default: '1' },
+    ],
+  },
 ];
 
 export default function ConstraintsPage() {
@@ -99,6 +110,7 @@ export default function ConstraintsPage() {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
+  const [tags, setTags] = useState<any[]>([]);
   const isRtl = i18n.language === 'he';
 
   const loadData = () => {
@@ -106,6 +118,7 @@ export default function ConstraintsPage() {
     getTeachers().then((r: any) => setTeachers(r.data.results ?? [])).catch(() => {});
     getSubjects().then((r: any) => setSubjects(r.data.results ?? [])).catch(() => {});
     getClasses().then((r: any) => setClasses(r.data.results ?? [])).catch(() => {});
+    getTeacherTags().then((r: any) => setTags(r.data.results ?? [])).catch(() => {});
   };
 
   useEffect(loadData, []);
@@ -227,6 +240,7 @@ export default function ConstraintsPage() {
           teachers={teachers}
           subjects={subjects}
           classes={classes}
+          tags={tags}
           onSave={async (data) => {
             await createConstraint({ ...data, school: 1 });
             setShowDialog(false);
@@ -239,10 +253,11 @@ export default function ConstraintsPage() {
   );
 }
 
-function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
+function AddConstraintDialog({ teachers, subjects, classes, tags, onSave, onClose }: {
   teachers: any[];
   subjects: any[];
   classes: any[];
+  tags: any[];
   onSave: (data: any) => void;
   onClose: () => void;
 }) {
@@ -257,6 +272,7 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
     teacher: null,
     subject: null,
     school_class: null,
+    tag: null,
   });
 
   const schema = TYPE_SCHEMAS.find((s) => s.value === form.constraint_type) ?? initial;
@@ -271,6 +287,7 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
       teacher: null,
       subject: null,
       school_class: null,
+      tag: null,
     });
   };
 
@@ -308,6 +325,7 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
               teachers={teachers}
               subjects={subjects}
               classes={classes}
+              tags={tags}
             />
           ))}
         </Stack>
@@ -322,13 +340,14 @@ function AddConstraintDialog({ teachers, subjects, classes, onSave, onClose }: {
   );
 }
 
-function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
+function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }: {
   field: Field;
   form: any;
   setForm: (f: any) => void;
   teachers: any[];
   subjects: any[];
   classes: any[];
+  tags: any[];
 }) {
   const { t } = useTranslation();
   const allLabel = t('constraints.all');
@@ -359,6 +378,26 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
         />
       );
     }
+    if (field.type === 'day') {
+      const dayLabels = [
+        { v: 1, l: 'ראשון' }, { v: 2, l: 'שני' }, { v: 3, l: 'שלישי' },
+        { v: 4, l: 'רביעי' }, { v: 5, l: 'חמישי' },
+      ];
+      return (
+        <TextField
+          fullWidth select label={field.labelKey}
+          value={form.parameters[field.key] ?? field.default}
+          onChange={(e) => setForm({
+            ...form,
+            parameters: { ...form.parameters, [field.key]: Number(e.target.value) },
+          })}
+        >
+          {dayLabels.map((d) => (
+            <MenuItem key={d.v} value={d.v}>{d.l}</MenuItem>
+          ))}
+        </TextField>
+      );
+    }
     return (
       <TextField
         fullWidth type="number" label={field.labelKey}
@@ -368,6 +407,21 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes }: {
           parameters: { ...form.parameters, [field.key]: Number(e.target.value) },
         })}
       />
+    );
+  }
+
+  if (field.kind === 'tag') {
+    return (
+      <TextField
+        fullWidth select label="תגית מורים"
+        value={form.tag ?? ''}
+        onChange={(e) => setForm({ ...form, tag: e.target.value === '' ? null : Number(e.target.value) })}
+      >
+        {tags.length === 0 && <MenuItem value="" disabled>אין תגיות — צרו ב-ניהול הנתונים</MenuItem>}
+        {tags.map((x: any) => (
+          <MenuItem key={x.id} value={x.id}>{x.name} ({x.teacher_count})</MenuItem>
+        ))}
+      </TextField>
     );
   }
 
