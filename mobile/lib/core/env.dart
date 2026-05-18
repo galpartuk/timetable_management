@@ -21,7 +21,7 @@ class Env {
   );
 
   /// App version (matches pubspec.yaml). Hardcoded — bump when pubspec bumps.
-  static const String appVersion = '0.1.0';
+  static const String appVersion = '0.2.0';
 
   /// Build timestamp injected by the build command via
   /// `--dart-define=BUILD_TIMESTAMP=...`. Local Israel time, format
