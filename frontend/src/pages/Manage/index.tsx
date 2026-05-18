@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Alert, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress,
@@ -960,6 +961,7 @@ type TeacherSortKey =
   | 'bagrut_hours' | 'role_hours' | 'total_contract_hours' | 'utilization_pct';
 
 function QualityTab() {
+  const navigate = useNavigate();
   const [timetables, setTimetables] = useState<any[]>([]);
   const [timetableId, setTimetableId] = useState<number | ''>('');
   const [quality, setQuality] = useState<TimetableQuality | null>(null);
@@ -1082,6 +1084,8 @@ function QualityTab() {
 
       {error && <Alert severity="error">{error}</Alert>}
 
+      {quality && <DataQualityIssues quality={quality} />}
+
       {quality && (
         <>
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
@@ -1189,7 +1193,9 @@ function QualityTab() {
                   </Box>
                   <Box component="tbody">
                     {sortedTeachers.map((t) => (
-                      <TeacherRow key={t.id} t={t} />
+                      <TeacherRow key={t.id} t={t}
+                        onClick={() => navigate(`/timetable?teacher=${t.id}&timetable=${timetableId}`)}
+                      />
                     ))}
                     {sortedTeachers.length === 0 && (
                       <Box component="tr">
@@ -1246,6 +1252,96 @@ function QualityTab() {
   );
 }
 
+function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
+  const issues = useMemo(() => {
+    const list: Array<{
+      severity: 'error' | 'warning' | 'info';
+      title: string;
+      detail: string;
+    }> = [];
+
+    const overCap = quality.teachers.filter((t) => t.utilization_pct > 100);
+    if (overCap.length > 0) {
+      list.push({
+        severity: 'error',
+        title: `${overCap.length} מורים מעל המכסה (>100% ניצול)`,
+        detail: overCap.slice(0, 5).map((t) =>
+          `${t.name} — ${t.utilization_pct}%`).join(' · ')
+          + (overCap.length > 5 ? ` · +${overCap.length - 5} נוספים` : ''),
+      });
+    }
+
+    const longGaps = quality.teachers.filter((t) => t.long_windows > 0);
+    if (longGaps.length > 0) {
+      list.push({
+        severity: 'error',
+        title: `${longGaps.length} מורים עם חלון של ${quality.long_window_threshold}+ שעות`,
+        detail: longGaps.slice(0, 5).map((t) =>
+          `${t.name} — פער ${t.max_single_gap}`).join(' · '),
+      });
+    }
+
+    const tooFewLessons = quality.classes.filter((c) => c.lessons < 25);
+    if (tooFewLessons.length > 0) {
+      list.push({
+        severity: 'warning',
+        title: `${tooFewLessons.length} כיתות עם פחות מ-25 שיעורים שבועיים`,
+        detail: tooFewLessons.slice(0, 8).map((c) =>
+          `${c.name} (${c.lessons})`).join(' · '),
+      });
+    }
+
+    const tooManyLessons = quality.classes.filter((c) => c.lessons > 45);
+    if (tooManyLessons.length > 0) {
+      list.push({
+        severity: 'warning',
+        title: `${tooManyLessons.length} כיתות עם מעל 45 שיעורים שבועיים`,
+        detail: tooManyLessons.slice(0, 8).map((c) =>
+          `${c.name} (${c.lessons})`).join(' · '),
+      });
+    }
+
+    const teacherSingleClass = quality.teachers.filter(
+      (t) => t.lessons > 10 && t.distinct_classes === 1
+    );
+    if (teacherSingleClass.length > 0) {
+      list.push({
+        severity: 'info',
+        title: `${teacherSingleClass.length} מורים עם 10+ שעות בכיתה אחת בלבד`,
+        detail: 'יש לבדוק אם הנתון נכון (יתכנו בעיות בייבוא)',
+      });
+    }
+
+    return list;
+  }, [quality]);
+
+  if (issues.length === 0) {
+    return (
+      <Alert severity="success" sx={{ mb: 0 }}>
+        ✓ לא נמצאו בעיות בנתונים — המערכת נראית מאוזנת
+      </Alert>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent>
+        <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1.5 }}>
+          בעיות שזוהו ({issues.length})
+        </Typography>
+        <Stack spacing={1}>
+          {issues.map((iss, i) => (
+            <Alert key={i} severity={iss.severity} sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+              <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{iss.title}</Typography>
+              <Typography sx={{ fontSize: 12, color: 'grey.700' }}>{iss.detail}</Typography>
+            </Alert>
+          ))}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SortableTh({
   k, sortKey, sortDir, onSort, children,
 }: {
@@ -1271,7 +1367,10 @@ function SortableTh({
   );
 }
 
-function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) {
+function TeacherRow({ t, onClick }: {
+  t: import('../../api/client').TeacherQualityRow;
+  onClick?: () => void;
+}) {
   const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
   // Color the windows cell by severity.
   const winColor = t.windows === 0 ? 'success.dark'
@@ -1295,11 +1394,12 @@ function TeacherRow({ t }: { t: import('../../api/client').TeacherQualityRow }) 
     : t.utilization_pct >= 70 ? 'rgba(16,185,129,0.08)' : 'transparent';
 
   return (
-    <Box component="tr" sx={{
+    <Box component="tr" onClick={onClick} sx={{
       '& td': {
         py: 0.75, px: 1, borderBottom: '1px solid', borderColor: 'grey.100',
         whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
       },
+      cursor: onClick ? 'pointer' : 'default',
       '&:hover': { background: 'grey.50' },
     }}>
       <Box component="td" sx={{ fontWeight: 600, position: 'sticky', insetInlineStart: 0, background: 'inherit' }}>

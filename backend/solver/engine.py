@@ -72,7 +72,7 @@ from apps.subjects.models import Teacher, TeachingAssignment
 from apps.scheduling.models import Constraint, TimetableEntry
 
 from solver.constraints import (
-    HANDLERS, Lesson, SolverContext, apply_teacher_day_off,
+    HANDLERS, SOFT_HANDLERS, Lesson, SolverContext, apply_teacher_day_off,
 )
 
 
@@ -375,6 +375,34 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     num_slots = len(time_slots)
     model = cp_model.CpModel()
 
+    # Locked entries: assignments the user has pinned. Re-solving must
+    # keep their slot fixed. We collect (assignment_id, slot_index) here
+    # and apply equality constraints once the vars exist.
+    locked_slot_by_assignment: dict[int, int] = {}
+    ts_index_for_pair: dict[tuple[int, int], int] = {}
+    for i, ts in enumerate(time_slots):
+        ts_index_for_pair[(ts.day, ts.period)] = i
+    for entry in (
+        TimetableEntry.objects.filter(timetable=timetable, locked=True)
+        .select_related('time_slot')
+    ):
+        # Find the matching assignment by (class, subject, teacher).
+        # We don't store assignment FK on TimetableEntry; the safest match
+        # is (school_class, subject, teacher) — there's at most one such
+        # assignment per pool primary.
+        match = next(
+            (a for a in assignments
+             if a.school_class_id == entry.school_class_id
+             and a.subject_id == entry.subject_id
+             and a.teacher_id == entry.teacher_id),
+            None,
+        )
+        if not match:
+            continue
+        slot_index = ts_index_for_pair.get((entry.time_slot.day, entry.time_slot.period))
+        if slot_index is not None:
+            locked_slot_by_assignment.setdefault(match.id, slot_index)
+
     # Step 1: create block-level slot vars; alias the leading prefix into tracks.
     for b in blocks:
         b.slot_vars = [
@@ -433,9 +461,29 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
                     assignment=t.assignment,
                     var=var,
                 ))
+    # Apply locked-slot constraints: for each pinned assignment, fix
+    # its tracks' first slot to the user's chosen slot. We pin only the
+    # very first hour — re-solver still chooses where the other hours go.
+    for b in blocks:
+        for t in b.tracks:
+            slot = locked_slot_by_assignment.get(t.assignment.id)
+            if slot is not None and t.slot_vars:
+                model.add(t.slot_vars[0] == slot)
+
     ctx = SolverContext(model, time_slots, lessons, pool_classes=pool_classes)
     unhandled: list[str] = []
+    soft_objective_terms: list = []  # filled below, merged into objective later
+    SOFT_DEFAULT_WEIGHT = 5
     for c in user_constraints:
+        if c.priority == 'soft':
+            soft_handler = SOFT_HANDLERS.get(c.constraint_type)
+            if soft_handler:
+                weight = int(c.parameters.get('weight', SOFT_DEFAULT_WEIGHT))
+                penalties = soft_handler(ctx, c, weight)
+                soft_objective_terms.extend((weight, p) for p in penalties)
+                continue
+            # No soft variant — fall back to hard handler so the rule is
+            # still applied, but log it for visibility.
         handler = HANDLERS.get(c.constraint_type)
         if handler is None:
             unhandled.append(c.constraint_type)
@@ -489,18 +537,42 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
 
     # Last-period penalty: each slot var picks the period; we add a
     # tiny cost when the chosen period is in the last 2 periods.
+    # Academic-heavy subjects (math, English, Hebrew, Tanakh, science,
+    # history, civics, literature) get a *3× multiplier* on this penalty
+    # so the solver actively pushes them into the morning. Easier
+    # subjects (PE, art) are unaffected — they're fine in late periods.
+    ACADEMIC_SUBJECT_KEYWORDS = (
+        'מתמטיקה', 'אנגלית', 'לשון', 'תנך', 'מדעים', 'היסטוריה',
+        'אזרחות', 'ספרות', 'גיאוגרפיה', 'גאוגרפיה',
+    )
+    from apps.subjects.models import Subject as _Subject
+    academic_subject_ids = set(
+        _Subject.objects
+        .filter(school=school)
+        .filter(name_he__regex='|'.join(ACADEMIC_SUBJECT_KEYWORDS))
+        .values_list('id', flat=True)
+    )
+
     if periods_per_day >= 9:
         late_slots = {i for (d, p), i in slot_index_for.items() if p >= periods_per_day - 1}
+        academic_slot_var_ids: set[int] = set()
+        for b in blocks:
+            if b.subject_id in academic_subject_ids:
+                for v in b.slot_vars:
+                    academic_slot_var_ids.add(id(v))
         for vars_list in vars_by_class.values():
             for v in vars_list:
                 bv = model.new_bool_var('')
-                # Force bv to indicate "v is a late slot" via channeling.
                 model.add_allowed_assignments(
                     [v, bv],
                     [(s, 1) for s in late_slots]
                     + [(s, 0) for s in range(num_slots) if s not in late_slots],
                 )
-                objective_terms.append((1, bv))
+                weight = 3 if id(v) in academic_slot_var_ids else 1
+                objective_terms.append((weight, bv))
+
+    # Merge in any soft-constraint penalties accumulated from user records.
+    objective_terms.extend(soft_objective_terms)
 
     if objective_terms:
         model.minimize(

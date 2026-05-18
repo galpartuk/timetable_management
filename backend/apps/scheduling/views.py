@@ -65,6 +65,62 @@ class TimetableViewSet(viewsets.ModelViewSet):
         )
         return Response(TimetableEntrySerializer(entries, many=True).data)
 
+    @action(detail=False, methods=['get'])
+    def compare(self, request):
+        """Compare quality metrics for several timetables side-by-side.
+
+        Query: ?ids=1,2,3
+        Returns: list of {id, name, status, totals, top5_window_teachers}
+        """
+        ids_raw = request.query_params.get('ids', '')
+        ids = [int(x) for x in ids_raw.split(',') if x.strip().isdigit()]
+        if not ids:
+            return Response({'error': 'pass ?ids=1,2,…'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from collections import defaultdict
+        results = []
+        for tid in ids:
+            tt = Timetable.objects.filter(id=tid).first()
+            if not tt:
+                continue
+            entries = list(tt.entries.select_related('teacher', 'time_slot', 'school_class__grade'))
+            t_periods = defaultdict(lambda: defaultdict(set))
+            c_periods = defaultdict(lambda: defaultdict(set))
+            for e in entries:
+                if e.teacher_id:
+                    t_periods[e.teacher_id][e.time_slot.day].add(e.time_slot.period)
+                c_periods[e.school_class_id][e.time_slot.day].add(e.time_slot.period)
+            t_windows = 0
+            t_long = 0
+            for days in t_periods.values():
+                for periods in days.values():
+                    if not periods:
+                        continue
+                    t_windows += max(periods) - min(periods) + 1 - len(periods)
+                    sorted_p = sorted(periods)
+                    gaps = [b - a - 1 for a, b in zip(sorted_p, sorted_p[1:]) if b - a > 1]
+                    t_long += sum(1 for g in gaps if g >= 4)
+            c_windows = 0
+            for days in c_periods.values():
+                for periods in days.values():
+                    if periods:
+                        c_windows += max(periods) - min(periods) + 1 - len(periods)
+            late = sum(1 for e in entries if e.time_slot.period >= 9)
+            results.append({
+                'id': tt.id,
+                'name': tt.name,
+                'status': tt.status,
+                'academic_year': tt.academic_year,
+                'created_at': tt.created_at,
+                'entries': len(entries),
+                'teacher_windows': t_windows,
+                'long_windows': t_long,
+                'class_windows': c_windows,
+                'late_period_lessons': late,
+                'solver_log': tt.solver_log[:600] if tt.solver_log else '',
+            })
+        return Response({'comparisons': results})
+
     @action(detail=True, methods=['get'])
     def quality(self, request, pk=None):
         """Quality metrics for the generated timetable.

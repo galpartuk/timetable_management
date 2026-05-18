@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAiAssistantContext } from '../../components/AiAssistant';
 import {
@@ -27,9 +28,16 @@ const STATUS_CHIP: Record<string, 'default' | 'primary' | 'success' | 'error' | 
 
 export default function TimetablePage() {
   const { t, i18n } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const teacherParam = searchParams.get('teacher');
+  const classParam = searchParams.get('class');
+  const timetableParam = searchParams.get('timetable');
+
   const [timetables, setTimetables] = useState<any[]>([]);
   const [selectedTT, setSelectedTT] = useState<any>(null);
-  const [viewMode, setViewMode] = useState<'class' | 'teacher'>('class');
+  const [viewMode, setViewMode] = useState<'class' | 'teacher'>(
+    teacherParam ? 'teacher' : 'class'
+  );
   const [classes, setClasses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<number | ''>('');
@@ -44,11 +52,28 @@ export default function TimetablePage() {
     getTimetables().then((r) => {
       const list = r.data.results ?? [];
       setTimetables(list);
-      if (list.length > 0) setSelectedTT(list[0]);
+      // If the URL has ?timetable=ID, prefer it; otherwise pick the first.
+      const target = timetableParam
+        ? list.find((tt: any) => tt.id === Number(timetableParam))
+        : list[0];
+      if (target) setSelectedTT(target);
     }).catch(() => {});
     getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {});
     getTeachers().then((r) => setTeachers(r.data.results ?? [])).catch(() => {});
-  }, []);
+  }, [timetableParam]);
+
+  // Apply teacher/class param once timetable is loaded.
+  useEffect(() => {
+    if (!selectedTT) return;
+    if (teacherParam) {
+      setSelectedId(Number(teacherParam));
+      setViewMode('teacher');
+    } else if (classParam) {
+      setSelectedId(Number(classParam));
+      setViewMode('class');
+    }
+  }, [selectedTT, teacherParam, classParam]);
+  void setSearchParams;
 
   useEffect(() => {
     if (!selectedTT) {
