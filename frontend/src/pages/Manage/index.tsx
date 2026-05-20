@@ -344,7 +344,7 @@ const DANGER_OPS: DangerOp[] = [
   {
     key: 'clear_assignments',
     title: 'נקה את כל שיבוצי ההוראה',
-    body: 'מסיר את כל ה-TeachingAssignment של בית הספר. סולבר לא יוכל לרוץ עד שיתווספו שיבוצים חדשים.',
+    body: 'מסיר את כל ה-TeachingAssignment של בית הספר. בנייה אוטומטית לא תוכל לרוץ עד שיתווספו שיבוצים חדשים.',
     buttonLabel: 'נקה שיבוצים',
     icon: <ClearIcon />,
     bulkOperation: 'clear_assignments',
@@ -934,7 +934,7 @@ function GapAnalysisTab() {
         >
           <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
             {data.assignments_without_teacher_count} שיעורים ללא מורה מוקצה.
-            הסולבר ידלג עליהם.
+            הבנייה האוטומטית תדלג עליהם.
           </Typography>
         </GapCard>
 

@@ -79,7 +79,7 @@ const Map<String, String> _en = {
   'חלונות ארוכים': 'Long gaps',
   'חלונות כיתות': 'Class gaps',
   'אחרי 8': 'After period 8',
-  'הרצת סולבר': 'Run solver',
+  'בנייה אוטומטית של המערכת': 'Auto-build timetable',
   'יצירה חדשה של המערכת תחליף את השיעורים הקיימים.':
       'Generating a new timetable will replace the existing lessons.',
   'הרץ': 'Run',

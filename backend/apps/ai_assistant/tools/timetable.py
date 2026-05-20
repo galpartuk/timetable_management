@@ -404,12 +404,12 @@ register_tool(Tool(
 
 
 def _run_generator(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
-    """Kick off the OR-Tools solver against an existing timetable.
+    """Kick off a timetable build in the background and return immediately.
 
-    Synchronous on purpose: the SSE tool-execution path is the user's
-    "loading" UI — they're staring at a confirmation card and waiting for
-    the result. For very large schools this could be slow; if it becomes a
-    problem, switch to a Celery task and return a job_id here.
+    Mirrors POST /api/timetables/{id}/generate/. The build runs in a
+    daemon thread (see apps.scheduling.tasks); the Timetable row's
+    ``status`` is the source of truth and flips from ``generating``
+    to ``completed`` / ``failed`` when the solver returns.
     """
     timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
     if not timetable_id:
@@ -427,55 +427,51 @@ def _run_generator(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     if not has_assignments:
         return {
             'error': (
-                'No teaching assignments exist for this school. The generator has '
+                'No teaching assignments exist for this school. The builder has '
                 'nothing to schedule. Import an Excel file or add assignments first.'
             ),
         }
 
-    # Mirror the existing /api/timetables/{id}/generate/ behaviour.
-    tt.status = Timetable.Status.GENERATING
-    tt.save(update_fields=['status'])
-    try:
-        from solver.engine import solve_timetable
-        success = solve_timetable(tt)
-        tt.status = (
-            Timetable.Status.COMPLETED if success else Timetable.Status.FAILED
-        )
-        tt.save(update_fields=['status'])
-    except Exception as exc:
-        tt.status = Timetable.Status.FAILED
-        tt.solver_log = str(exc)
-        tt.save(update_fields=['status', 'solver_log'])
-        return {'error': f'solver crashed: {exc}', 'status': tt.status}
-
+    from apps.scheduling.tasks import is_generating, start_generation
+    if is_generating(tt.id):
+        return {
+            'status': 'already_running',
+            'timetable_id': tt.id,
+            'detail': 'A build is already running for this timetable; wait for it to finish.',
+        }
+    start_generation(tt)
     return {
-        'ok': success,
+        'status': 'started',
         'timetable_id': tt.id,
-        'status': tt.status,
-        'entries_created': TimetableEntry.objects.filter(timetable=tt).count(),
+        'detail': (
+            'Background build started. Call summarize_timetable or read the '
+            'timetable again in 30-60s to see completion.'
+        ),
     }
 
 
 register_tool(Tool(
     name='run_generator',
     description=(
-        'Run the OR-Tools solver to fill a timetable with entries based on the '
-        'school\'s teaching assignments and constraints. Mutating: replaces any '
-        'existing entries on this timetable. Can take 30s+ for large schools.'
+        'Start a background build of the timetable (OR-Tools constraint solver) '
+        'based on the school\'s teaching assignments and constraints. Returns '
+        "immediately with status='started'; the build's outcome lands on the "
+        'Timetable.status field a few seconds to minutes later. Mutating: '
+        'replaces any existing entries on this timetable when it completes.'
     ),
     input_schema={
         'type': 'object',
         'properties': {
             'timetable_id': {
                 'type': 'integer',
-                'description': 'Timetable to (re)generate. Defaults to the one open in the UI.',
+                'description': 'Timetable to (re)build. Defaults to the one open in the UI.',
             },
         },
     },
     handler=_run_generator,
     modules=['timetable'],
     requires_confirmation=True,
-    preview_template='להריץ את הסולבר על מערכת #{input.timetable_id} (יכול להחליף שיעורים קיימים)',
+    preview_template='להתחיל בנייה אוטומטית של מערכת #{input.timetable_id} (תחליף שיעורים קיימים)',
 ))
 
 
@@ -613,7 +609,7 @@ def _suggest_improvements(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, 
         'suggestions': suggestions[:3],
         'note': (
             'אלו הצעות אוטומטיות מבוססות-היוריסטיקה. למימוש בפועל הריצו את '
-            'הסולבר מחדש אחרי הוספת אילוצים מתאימים.'
+            'בנייה אוטומטית מחדש אחרי הוספת אילוצים מתאימים.'
         ),
     }
 

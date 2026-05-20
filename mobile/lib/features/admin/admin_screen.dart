@@ -128,7 +128,7 @@ class _AdminBody extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        tr(context, 'הרצת סולבר'),
+                        tr(context, 'בנייה אוטומטית של המערכת'),
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
@@ -146,16 +146,45 @@ class _AdminBody extends ConsumerWidget {
                   onPressed: running
                       ? null
                       : () async {
+                          // Backend returns 202 immediately and the
+                          // build runs in a daemon thread. Poll the
+                          // timetable list every 2s until status leaves
+                          // 'generating' before invalidating the data
+                          // providers — otherwise we'd refetch stale
+                          // 'generating' state on the first tick.
                           ref.read(_solverBusyProvider.notifier).state = true;
                           try {
                             await ref
                                 .read(timetableApiProvider)
                                 .runSolver(timetableId);
-                            ref.invalidate(qualityProvider(timetableId));
-                            ref.invalidate(scheduleForOwnerProvider);
-                          } finally {
-                            ref.read(_solverBusyProvider.notifier).state = false;
+                          } catch (_) {
+                            // 409 = already running; treat as 'in progress'
+                            // and fall through to polling.
                           }
+                          final api = ref.read(timetableApiProvider);
+                          final deadline = DateTime.now().add(
+                            const Duration(minutes: 15),
+                          );
+                          while (DateTime.now().isBefore(deadline)) {
+                            await Future<void>.delayed(
+                              const Duration(seconds: 2),
+                            );
+                            try {
+                              final list = await api.list();
+                              final tt = list.firstWhere(
+                                (t) => t.id == timetableId,
+                                orElse: () => list.first,
+                              );
+                              if (tt.status != 'generating') break;
+                            } catch (_) {
+                              // Network blip — keep polling until the
+                              // 15-minute safety net trips.
+                            }
+                          }
+                          ref.invalidate(timetablesListProvider);
+                          ref.invalidate(qualityProvider(timetableId));
+                          ref.invalidate(scheduleForOwnerProvider);
+                          ref.read(_solverBusyProvider.notifier).state = false;
                         },
                   child: running
                       ? const SizedBox(
