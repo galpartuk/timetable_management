@@ -8,6 +8,7 @@ from .serializers import (
     ConstraintSerializer, TimetableSerializer,
     TimetableListSerializer, TimetableEntrySerializer,
 )
+from .tasks import is_generating, start_generation
 
 
 class ConstraintViewSet(viewsets.ModelViewSet):
@@ -27,27 +28,65 @@ class TimetableViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def generate(self, request, pk=None):
+        """Kick off a build for this timetable in a background thread.
+
+        Returns ``202 Accepted`` immediately with the row already
+        flipped to ``generating``. The CP-SAT solver routinely runs
+        for minutes; reverse proxies (Caddy/nginx/Cloudflare) close
+        idle upstream connections after 60-120s and the client used
+        to see ``Unexpected end of JSON input``.
+
+        The client should poll ``GET /api/timetables/{id}/`` until
+        ``status`` is no longer ``generating`` (it becomes
+        ``completed`` or ``failed``).
+
+        Query string: ``?max_time_seconds=N`` caps the solver. Clamped
+        to [5, 1800].
+        """
         timetable = self.get_object()
-        timetable.status = Timetable.Status.GENERATING
-        timetable.save()
 
         try:
-            from solver.engine import solve_timetable
-            success = solve_timetable(timetable)
-            if success:
-                timetable.status = Timetable.Status.COMPLETED
-            else:
-                timetable.status = Timetable.Status.FAILED
-            timetable.save()
-            return Response(TimetableSerializer(timetable).data)
-        except Exception as e:
-            timetable.status = Timetable.Status.FAILED
-            timetable.solver_log = str(e)
-            timetable.save()
+            cap = int(request.query_params.get('max_time_seconds', '300'))
+        except (TypeError, ValueError):
+            cap = 300
+        cap = max(5, min(cap, 1800))
+
+        if is_generating(timetable.id):
             return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {
+                    'status': 'generating',
+                    'detail': 'בנייה אוטומטית כבר רצה למערכת הזו.',
+                    'timetable': TimetableSerializer(timetable).data,
+                },
+                status=status.HTTP_409_CONFLICT,
             )
+
+        started = start_generation(timetable, max_time_seconds=cap)
+        if not started:
+            # Lost the race with another request — same outcome as above.
+            return Response(
+                {
+                    'status': 'generating',
+                    'detail': 'בנייה אוטומטית כבר רצה למערכת הזו.',
+                    'timetable': TimetableSerializer(timetable).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        timetable.refresh_from_db()
+        return Response(
+            {
+                'status': 'generating',
+                'detail': (
+                    'בנייה אוטומטית התחילה ברקע. עקבו אחרי GET '
+                    '/api/timetables/{id}/ עד שהסטטוס יתעדכן.'
+                ),
+                'poll_url': f'/api/timetables/{timetable.id}/',
+                'timetable': TimetableSerializer(timetable).data,
+                'max_time_seconds': cap,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=['get'], url_path='by-class/(?P<class_id>[^/.]+)')
     def by_class(self, request, pk=None, class_id=None):

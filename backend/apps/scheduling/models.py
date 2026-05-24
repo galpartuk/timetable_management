@@ -12,6 +12,9 @@ class Constraint(models.Model):
         LUNCH_BREAK = 'lunch_break', 'הפסקת אוכל'
         PREFERRED_PERIODS = 'preferred_periods', 'שיעורים מועדפים'
         NO_LAST_PERIOD = 'no_last_period', 'לא בשיעור אחרון'
+        # Block every teacher in `tag` at the (day, period) slots listed
+        # in parameters['slots']. Use for staff/team meetings.
+        GROUP_BLOCKED_SLOT = 'group_blocked_slot', 'חסימת קבוצת מורים בשיעור'
         CUSTOM = 'custom', 'מותאם אישית'
 
     class Priority(models.TextChoices):
@@ -40,6 +43,12 @@ class Constraint(models.Model):
     school_class = models.ForeignKey(
         'school.SchoolClass', on_delete=models.CASCADE, null=True, blank=True,
         related_name='constraints', verbose_name='כיתה',
+    )
+    # Used by GROUP_BLOCKED_SLOT — the constraint applies to every teacher
+    # carrying this tag (e.g. "6th-grade staff" → weekly meeting).
+    tag = models.ForeignKey(
+        'subjects.TeacherTag', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='constraints', verbose_name='תגית מורים',
     )
 
     class Meta:

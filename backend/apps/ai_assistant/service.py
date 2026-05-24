@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, Iterator, List
 
 from django.conf import settings
@@ -66,6 +67,12 @@ def _render_preview(template: str, input: Dict[str, Any]) -> str:
     out = template
     for k, v in (input or {}).items():
         out = out.replace('{input.' + k + '}', str(v))
+    # Drop any placeholders the model left unfilled (optional inputs it
+    # omitted) so we never leak a raw "{input.mode}" into the user's
+    # confirmation card. Then tidy the whitespace/empty parens left behind.
+    out = re.sub(r'\{input\.[^}]*\}', '', out)
+    out = re.sub(r'\(\s*\)', '', out)         # empty "()" from a dropped arg
+    out = re.sub(r'\s{2,}', ' ', out).strip()
     return out
 
 

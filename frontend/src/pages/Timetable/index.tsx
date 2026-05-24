@@ -9,7 +9,7 @@ import {
 } from '@mui/material';
 import { CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print } from '@mui/icons-material';
 import {
-  getTimetables, createTimetable, generateTimetable,
+  getTimetables, getTimetable, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
   getTimetableQuality, moveTimetableEntry, toggleEntryLock,
@@ -107,18 +107,50 @@ export default function TimetablePage() {
   }, [quality, selectedId, viewMode]);
 
   const handleGenerate = async () => {
+    // Kick off the background build. The backend returns 202 immediately
+    // with the row already flipped to 'generating'; the actual solve
+    // happens in a daemon thread (apps/scheduling/tasks.py) so a slow
+    // build can't cause the empty-JSON-body bug we used to hit when the
+    // reverse proxy killed long requests.
     if (!selectedTT) return;
     setGenerating(true);
     setError('');
     try {
-      const res = await generateTimetable(selectedTT.id);
-      setSelectedTT(res.data);
-      getTimetables().then((r) => setTimetables(r.data.results ?? []));
+      await generateTimetable(selectedTT.id);
     } catch (err: any) {
-      setError(err.response?.data?.error || (isRtl ? 'שגיאה ביצירת מערכת שעות' : 'Failed to generate timetable'));
-    } finally {
-      setGenerating(false);
+      // 409 means another build is already running — treat that as
+      // "fine, just start polling".
+      const code = err.response?.status;
+      if (code !== 409) {
+        setError(err.response?.data?.error || err.response?.data?.detail
+          || (isRtl ? 'שגיאה ביצירת מערכת שעות' : 'Failed to generate timetable'));
+        setGenerating(false);
+        return;
+      }
     }
+    const ttId = selectedTT.id;
+    const pollMs = 2000;
+    const giveUpAt = Date.now() + 15 * 60 * 1000; // 15min safety net
+    const ticker = setInterval(async () => {
+      try {
+        const r = await getTimetable(ttId);
+        if (r.data.status !== 'generating') {
+          clearInterval(ticker);
+          setSelectedTT(r.data);
+          getTimetables().then((res) => setTimetables(res.data.results ?? []));
+          if (r.data.status === 'failed') {
+            setError(isRtl ? 'הבנייה האוטומטית נכשלה — בדקו את לוג הבנייה.' : 'Generation failed — see solver log.');
+          }
+          setGenerating(false);
+        } else if (Date.now() > giveUpAt) {
+          clearInterval(ticker);
+          setError(isRtl ? 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.' : 'Build exceeded 15 minutes — check the server log.');
+          setGenerating(false);
+        }
+      } catch {
+        // Network blip — keep polling until the safety net trips.
+      }
+    }, pollMs);
   };
 
   const grid: Record<string, any> = {};
@@ -140,10 +172,10 @@ export default function TimetablePage() {
       visible_entry_count: entries.length,
     },
     quickActions: [
-      { label: 'צור מערכת חדשה והפק אותה', prompt: 'צור מערכת שעות חדשה לשנת 2026-2027 בשם "מערכת חדשה" והפעל את הסולבר.' },
+      { label: 'צור מערכת חדשה והפק אותה', prompt: 'צור מערכת שעות חדשה לשנת 2026-2027 בשם "מערכת חדשה" והפעל בנייה אוטומטית.' },
       { label: 'מצא התנגשויות במערכת', prompt: 'בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.' },
       { label: 'נקוד את המערכת ותן תובנות', prompt: 'תן לי סקירה של המערכת הנוכחית – כמה שיעורים, כמה מורים, ומה איכות הפיזור.' },
-      { label: 'הראה לי את שיבוצי ההוראה', prompt: 'הצג את כל שיבוצי ההוראה הקיימים, כדי שאוכל לראות מה הסולבר מקבל כקלט.' },
+      { label: 'הראה לי את שיבוצי ההוראה', prompt: 'הצג את כל שיבוצי ההוראה הקיימים, כדי שאוכל לראות מה הבנייה האוטומטית מקבלת כקלט.' },
     ],
   }), [selectedTT?.id, selectedTT?.name, selectedTT?.status, viewMode, selectedId, entries.length]));
 

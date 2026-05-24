@@ -662,24 +662,22 @@ def _canonicalize_teacher_name(raw_name: str) -> str:
 def _teacher_for(
     school: School,
     raw_name: str,
-    cache: dict[tuple[str, str], Teacher],
+    cache: dict[str, Teacher],
     *,
-    subject_key: str = '',
+    subject_key: str = '',  # kept for call-site compatibility; ignored
 ) -> Teacher | None:
-    """Resolve a raw teacher cell to a Teacher record.
+    """Resolve a raw teacher cell to a Teacher record, deduplicated by
+    canonical first name within the school.
 
-    The Excel uses first names only (e.g., "מיטל"), and the same short
-    name often refers to different people in different subject sheets —
-    מיטל-the-Arabic-teacher is not מיטל-the-math-teacher. So we cache
-    and dedupe by (canonical_name, subject_key): if we see מיטל in two
-    different subjects, we create two separate Teacher records (the
-    canonical first_name is the same; we use last_name to record the
-    subject as a disambiguating suffix so the admin UI shows them
-    distinctly).
-
-    Pass ``subject_key=""`` (default) to ignore subject scoping — used
-    when importing the תפקידים sheet where the same teacher legitimately
-    spans multiple sheets.
+    Previously this function split the same first name across different
+    subject sheets — the assumption being that "מיטל-the-Arabic-teacher"
+    might be a different person from "מיטל-the-math-teacher". In practice
+    the source Excels use a distinct full name when there are genuinely
+    two people, so the split produced false duplicates (the same person
+    teaching homeroom AND a subject became two Teacher rows). We now
+    always merge by canonical first name. If a school really does have
+    two teachers sharing a first name, the Excel should write them with
+    a disambiguating last name in the cell (e.g., "מיטל א" / "מיטל ב").
     """
     canonical = _canonicalize_teacher_name(raw_name)
     if not canonical:
@@ -689,47 +687,17 @@ def _teacher_for(
     if re.fullmatch(r'\d+(?:\.\d+)?', canonical):
         return None
 
-    key = (canonical, subject_key)
-    cached = cache.get(key)
+    cached = cache.get(canonical)
     if cached:
         return cached
 
-    # First, an exact-name match without subject scoping (lets the role
-    # sheet reuse a teacher that's already been created by a subject sheet).
-    if not subject_key:
-        existing = Teacher.objects.filter(school=school, first_name=canonical).first()
-        if existing:
-            cache[key] = existing
-            return existing
+    existing = Teacher.objects.filter(school=school, first_name=canonical).order_by('id').first()
+    if existing:
+        cache[canonical] = existing
+        return existing
 
-    # With subject scoping, look for a matching (name, subject) pair —
-    # we record the subject as ``last_name`` (slightly abuse, but it
-    # keeps the existing DB schema and is human-readable).
-    if subject_key:
-        existing = Teacher.objects.filter(
-            school=school, first_name=canonical, last_name=subject_key,
-        ).first()
-        if existing:
-            cache[key] = existing
-            return existing
-        # First time we see this (name, subject) — but maybe a Teacher
-        # with empty last_name already exists for the same name. If so,
-        # *adopt* it for the first subject we see (so we don't end up
-        # with duplicate rows in the simple case where only one Meital
-        # exists). Subsequent subjects then create new records.
-        teacher_with_empty = Teacher.objects.filter(
-            school=school, first_name=canonical, last_name='',
-        ).first()
-        if teacher_with_empty:
-            teacher_with_empty.last_name = subject_key
-            teacher_with_empty.save(update_fields=['last_name'])
-            cache[key] = teacher_with_empty
-            return teacher_with_empty
-
-    t = Teacher.objects.create(
-        school=school, first_name=canonical, last_name=subject_key,
-    )
-    cache[key] = t
+    t = Teacher.objects.create(school=school, first_name=canonical, last_name='')
+    cache[canonical] = t
     return t
 
 
