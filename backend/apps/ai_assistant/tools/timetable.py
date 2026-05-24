@@ -157,6 +157,21 @@ def _move_entry(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
             'clash_entry_id': clash.id,
         }
 
+    # Refuse if the teacher is already booked at the target slot. The DB
+    # unique key is (timetable, class, slot, teacher) — it includes class,
+    # so it would happily let the same teacher land in two classes at once.
+    # Guard here so a move never silently creates a teacher double-booking.
+    teacher_clash = TimetableEntry.objects.filter(
+        timetable_id=entry.timetable_id,
+        teacher_id=entry.teacher_id,
+        time_slot_id=target_time_slot_id,
+    ).exclude(id=entry.id).first()
+    if teacher_clash:
+        return {
+            'error': 'the teacher is already teaching at the target slot',
+            'clash_entry_id': teacher_clash.id,
+        }
+
     old_slot = str(entry.time_slot)
     entry.time_slot_id = target_time_slot_id
     entry.save(update_fields=['time_slot'])
@@ -632,4 +647,189 @@ register_tool(Tool(
     },
     handler=_suggest_improvements,
     modules=['timetable'],
+))
+
+
+# ── editing an existing timetable (read targets, then mutate) ──────────────
+# These are the heart of "ask the AI to change the schedule": the model reads
+# the grid for a class or teacher (entry ids + which slots are free), then
+# calls move_entry / swap_entries to actually rearrange the existing lessons.
+
+def _get_schedule(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Return the existing lessons for one class or one teacher in a
+    timetable — including each lesson's entry_id and time_slot_id, plus the
+    slots that entity has free. This is what lets the model pick *what* to
+    move and *where* it may legally land."""
+    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    if not timetable_id:
+        return {'error': 'timetable_id is required (or open a timetable in the UI)'}
+    tt = Timetable.objects.filter(id=timetable_id).first()
+    if not tt:
+        return {'error': f'timetable {timetable_id} not found'}
+
+    class_id = input.get('class_id')
+    teacher_id = input.get('teacher_id')
+    if not class_id and not teacher_id:
+        return {'error': 'provide class_id or teacher_id'}
+    day = input.get('day')
+
+    qs = (
+        TimetableEntry.objects
+        .filter(timetable_id=timetable_id)
+        .select_related('subject', 'teacher', 'school_class__grade', 'time_slot')
+    )
+    if class_id:
+        qs = qs.filter(school_class_id=class_id)
+    if teacher_id:
+        qs = qs.filter(teacher_id=teacher_id)
+    if day:
+        qs = qs.filter(time_slot__day=day)
+    qs = qs.order_by('time_slot__day', 'time_slot__period')
+
+    entries = [{
+        'entry_id': e.id,
+        'time_slot_id': e.time_slot_id,
+        'day': e.time_slot.day,
+        'period': e.time_slot.period,
+        'subject': e.subject.name_he,
+        'teacher': str(e.teacher),
+        'teacher_id': e.teacher_id,
+        'class': e.school_class.display_name,
+        'class_id': e.school_class_id,
+        'locked': e.locked,
+    } for e in qs]
+
+    # Free slots for this entity = the school's slots it isn't already in.
+    # These are the only valid move_entry targets that won't collide.
+    occ_qs = TimetableEntry.objects.filter(timetable_id=timetable_id)
+    occ_qs = occ_qs.filter(school_class_id=class_id) if class_id else occ_qs.filter(teacher_id=teacher_id)
+    occupied = set(occ_qs.values_list('time_slot_id', flat=True))
+    free_slots = [{
+        'time_slot_id': ts.id, 'day': ts.day, 'period': ts.period,
+    } for ts in TimeSlot.objects.filter(school_id=tt.school_id).order_by('day', 'period')
+        if ts.id not in occupied and (not day or ts.day == day)]
+
+    return {
+        'timetable_id': timetable_id,
+        'filter': {'class_id': class_id, 'teacher_id': teacher_id, 'day': day},
+        'entry_count': len(entries),
+        'entries': entries,
+        'free_slots': free_slots,
+    }
+
+
+register_tool(Tool(
+    name='get_schedule',
+    description=(
+        'Read the existing lessons for ONE class or ONE teacher in a '
+        'timetable. Returns each lesson with its entry_id and time_slot_id '
+        '(so you can move or swap it) plus the slots that class/teacher has '
+        'free (valid move targets). Call this FIRST whenever the user asks '
+        'to move, swap, or rearrange lessons in an existing timetable — it '
+        'is how you discover the entry_id and target_time_slot_id that '
+        'move_entry and swap_entries need. Filter by day (1=Sun..5=Thu) to '
+        'narrow it down.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'timetable_id': {'type': 'integer', 'description': 'Defaults to the timetable open in the UI.'},
+            'class_id': {'type': 'integer', 'description': 'Show this class\'s schedule.'},
+            'teacher_id': {'type': 'integer', 'description': 'Show this teacher\'s schedule.'},
+            'day': {'type': 'integer', 'description': 'Optional: only this day, 1=Sun..5=Thu.'},
+        },
+    },
+    handler=_get_schedule,
+    modules=['timetable'],
+))
+
+
+# A swap is its own inverse, so if the model re-issues the same swap (it
+# sometimes "double-checks" by reading the grid and swapping again) an even
+# number of calls would silently revert the user's change. Treat an identical
+# swap repeated within this window as a no-op so the first one always sticks.
+_recent_swaps: Dict[Any, float] = {}
+_SWAP_DEDUP_TTL_SECONDS = 30.0
+
+
+def _swap_entries(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Swap the time slots of two existing lessons. Use when the target slot
+    is already occupied (the common case in a dense timetable) and a plain
+    move_entry would be refused."""
+    import time
+    from django.db import IntegrityError, transaction
+
+    a_id = input.get('entry_id_a')
+    b_id = input.get('entry_id_b')
+    if not a_id or not b_id:
+        return {'error': 'entry_id_a and entry_id_b are required'}
+    if a_id == b_id:
+        return {'error': 'the two entries must be different'}
+
+    a = TimetableEntry.objects.filter(id=a_id).select_related('time_slot').first()
+    b = TimetableEntry.objects.filter(id=b_id).select_related('time_slot').first()
+    if not a or not b:
+        return {'error': 'one or both entries not found'}
+    if a.timetable_id != b.timetable_id:
+        return {'error': 'the two entries belong to different timetables'}
+    # Same class AND teacher would trip the unique key mid-swap, and the
+    # request is ambiguous anyway — ask for two move_entry calls instead.
+    if a.school_class_id == b.school_class_id and a.teacher_id == b.teacher_id:
+        return {'error': 'these two lessons share the same class and teacher; move them one at a time with move_entry'}
+
+    # Idempotency guard against the model re-issuing the same swap.
+    now = time.time()
+    key = (a.timetable_id, frozenset((a.id, b.id)))
+    for k, ts in list(_recent_swaps.items()):       # prune stale entries
+        if now - ts > _SWAP_DEDUP_TTL_SECONDS:
+            _recent_swaps.pop(k, None)
+    if key in _recent_swaps:
+        return {
+            'ok': True,
+            'already_applied': True,
+            'note': ('This exact swap was just applied moments ago — skipping to '
+                     'avoid reverting it. The schedule already reflects the change.'),
+            'entries': [a.id, b.id],
+        }
+
+    a_slot_str, b_slot_str = str(a.time_slot), str(b.time_slot)
+    try:
+        with transaction.atomic():
+            a.time_slot_id, b.time_slot_id = b.time_slot_id, a.time_slot_id
+            a.save(update_fields=['time_slot'])
+            b.save(update_fields=['time_slot'])
+    except IntegrityError as exc:
+        return {'error': f'swap would create a scheduling conflict ({exc})'}
+
+    _recent_swaps[key] = now
+    return {
+        'ok': True,
+        'swapped': [
+            {'entry_id': a.id, 'from': a_slot_str, 'to': b_slot_str},
+            {'entry_id': b.id, 'from': b_slot_str, 'to': a_slot_str},
+        ],
+    }
+
+
+register_tool(Tool(
+    name='swap_entries',
+    description=(
+        'Swap the time slots of two existing lessons in a timetable. Use '
+        'this (instead of move_entry) when you want lesson A to take lesson '
+        "B's slot and vice-versa — e.g. the user wants two lessons to trade "
+        'places, or the target slot is occupied. Mutating — the user must '
+        'confirm. Find the two entry ids with get_schedule first.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'entry_id_a': {'type': 'integer', 'description': 'First lesson (TimetableEntry.id).'},
+            'entry_id_b': {'type': 'integer', 'description': 'Second lesson (TimetableEntry.id).'},
+        },
+        'required': ['entry_id_a', 'entry_id_b'],
+    },
+    handler=_swap_entries,
+    modules=['timetable'],
+    requires_confirmation=True,
+    preview_template='להחליף בין שיעור #{input.entry_id_a} לשיעור #{input.entry_id_b}',
 ))

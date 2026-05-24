@@ -170,7 +170,7 @@ register_tool(Tool(
     handler=_assign_teachers_to_tag,
     modules=['timetable', 'constraints', 'data'],
     requires_confirmation=True,
-    preview_template='עדכון חברות בתגית #{input.tag_id} — {input.teacher_ids} ({input.mode})',
+    preview_template='עדכון חברות בתגית #{input.tag_id} — מורים: {input.teacher_ids}',
 ))
 
 
