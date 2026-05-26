@@ -322,6 +322,28 @@ export const uploadDaysOff = (file: File, schoolId: number) => {
 export const getImportLogs = (schoolId?: number) =>
   api.get('/import/logs/', { params: schoolId ? { school_id: schoolId } : {} });
 
+export interface DataSource {
+  source: {
+    log_id: number;
+    file_name: string;
+    uploaded_at: string;
+    has_file: boolean;
+  } | null;
+  counts: {
+    teachers: number;
+    classes: number;
+    subjects: number;
+    assignments: number;
+    has_data: boolean;
+  };
+}
+
+export const getCurrentDataSource = (schoolId: number) =>
+  api.get<DataSource>('/import/current/', { params: { school_id: schoolId } });
+
+export const downloadImportFile = (logId: number) =>
+  api.get(`/import/logs/${logId}/download/`, { responseType: 'blob' });
+
 export interface GapAnalysis {
   school_id: number;
   classes_missing_homeroom_count: number;

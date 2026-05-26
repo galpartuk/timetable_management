@@ -129,7 +129,20 @@
     "draft": "טיוטה",
     "completed": "הושלם",
     "failed": "נכשל",
-    "published": "פורסם"
+    "published": "פורסם",
+    "dataLoaded": "נתונים טעונים",
+    "uploadedAt": "הועלה",
+    "dataNoSource": "קובץ המקור אינו זמין להורדה (יובא לפני שמירת קבצים)",
+    "teachersShort": "מורים",
+    "classesShort": "כיתות",
+    "subjectsShort": "מקצועות",
+    "assignmentsShort": "שיבוצים",
+    "download": "הורד",
+    "downloadExcel": "הורד את קובץ האקסל",
+    "replaceExcel": "החלף קובץ",
+    "uploadExcel": "העלה אקסל",
+    "noDataTitle": "אין נתונים טעונים",
+    "noDataHint": "העלה קובץ אקסל עם מורים, כיתות ושיבוצים — בלעדיו אי אפשר לבנות מערכת."
   },
   "days": {
     "sunday": "ראשון",

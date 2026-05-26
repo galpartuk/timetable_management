@@ -129,7 +129,20 @@
     "draft": "Draft",
     "completed": "Completed",
     "failed": "Failed",
-    "published": "Published"
+    "published": "Published",
+    "dataLoaded": "Data loaded",
+    "uploadedAt": "Uploaded",
+    "dataNoSource": "Source file not available for download (imported before file storage)",
+    "teachersShort": "teachers",
+    "classesShort": "classes",
+    "subjectsShort": "subjects",
+    "assignmentsShort": "assignments",
+    "download": "Download",
+    "downloadExcel": "Download the Excel file",
+    "replaceExcel": "Replace file",
+    "uploadExcel": "Upload Excel",
+    "noDataTitle": "No data loaded",
+    "noDataHint": "Upload an Excel file with teachers, classes, and assignments — a timetable can't be built without it."
   },
   "days": {
     "sunday": "Sunday",
