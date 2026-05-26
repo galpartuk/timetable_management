@@ -1,20 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAiAssistantContext } from '../../components/AiAssistant';
 import {
   Box, Typography, Card, CardContent, Button, ToggleButtonGroup,
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
-  Dialog, DialogTitle, DialogContent, DialogActions, Stack,
+  Dialog, DialogTitle, DialogContent, DialogActions, Stack, LinearProgress,
+  Tooltip,
 } from '@mui/material';
-import { CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print } from '@mui/icons-material';
+import {
+  CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print,
+  UploadFile, Download, InsertDriveFile, WarningAmber,
+} from '@mui/icons-material';
 import {
   getTimetables, getTimetable, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
   getTimetableQuality, moveTimetableEntry, toggleEntryLock,
-  type TimetableQuality,
+  getCurrentDataSource, downloadImportFile, uploadExcel,
+  type TimetableQuality, type DataSource,
 } from '../../api/client';
+
+const SCHOOL_ID = 1;
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'] as const;
 const MAX_PERIODS = 10;
@@ -47,7 +54,53 @@ export default function TimetablePage() {
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [quality, setQuality] = useState<TimetableQuality | null>(null);
+  const [dataSource, setDataSource] = useState<DataSource | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isRtl = i18n.language === 'he';
+
+  const loadDataSource = () =>
+    getCurrentDataSource(SCHOOL_ID).then((r) => setDataSource(r.data)).catch(() => {});
+
+  useEffect(() => { loadDataSource(); }, []);
+
+  const handleUploadExcel = async (file: File) => {
+    if (!(file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+      setError(isRtl ? 'יש לבחור קובץ אקסל (.xlsx)' : 'Please choose an Excel file (.xlsx)');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      await uploadExcel(file, SCHOOL_ID);
+      // Refresh everything that depends on the loaded data.
+      await Promise.all([
+        loadDataSource(),
+        getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {}),
+        getTeachers().then((r) => setTeachers(r.data.results ?? [])).catch(() => {}),
+      ]);
+    } catch (e: any) {
+      setError(e.response?.data?.error || (isRtl ? 'הייבוא נכשל' : 'Import failed'));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadExcel = async () => {
+    const logId = dataSource?.source?.log_id;
+    if (!logId) return;
+    try {
+      const res = await downloadImportFile(logId);
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = dataSource?.source?.file_name || 'import.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(isRtl ? 'הורדת הקובץ נכשלה' : 'Download failed');
+    }
+  };
 
   useEffect(() => {
     getTimetables().then((r) => {
@@ -240,6 +293,83 @@ export default function TimetablePage() {
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {/* Loaded-data panel — shows which Excel powers the current data, with
+          quick download + replace, or a prominent upload prompt when empty. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleUploadExcel(f);
+          e.target.value = '';
+        }}
+      />
+      {dataSource && (
+        <Card sx={{ mb: 2.5 }} className="no-print">
+          <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+            {uploading && <LinearProgress sx={{ mb: 2 }} />}
+            {dataSource.counts.has_data ? (
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+                <Box sx={{
+                  width: 44, height: 44, borderRadius: 2, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(16, 185, 129, 0.10)', color: 'success.main',
+                }}>
+                  <InsertDriveFile />
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography sx={{ fontSize: 14, fontWeight: 700 }} noWrap>
+                    {dataSource.source?.file_name || t('timetable.dataLoaded')}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: 'grey.500' }}>
+                    {dataSource.source
+                      ? `${t('timetable.uploadedAt')} ${new Date(dataSource.source.uploaded_at).toLocaleDateString(isRtl ? 'he-IL' : 'en-US')}`
+                      : t('timetable.dataNoSource')}
+                  </Typography>
+                  <Stack direction="row" sx={{ mt: 1, flexWrap: 'wrap', gap: 0.5 }}>
+                    <Chip size="small" label={`${dataSource.counts.teachers} ${t('timetable.teachersShort')}`} />
+                    <Chip size="small" label={`${dataSource.counts.classes} ${t('timetable.classesShort')}`} />
+                    <Chip size="small" label={`${dataSource.counts.subjects} ${t('timetable.subjectsShort')}`} />
+                    <Chip size="small" label={`${dataSource.counts.assignments} ${t('timetable.assignmentsShort')}`} />
+                  </Stack>
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  {dataSource.source?.has_file && (
+                    <Tooltip title={t('timetable.downloadExcel')}>
+                      <Button variant="outlined" startIcon={<Download />} onClick={handleDownloadExcel} disabled={uploading}>
+                        {t('timetable.download')}
+                      </Button>
+                    </Tooltip>
+                  )}
+                  <Button variant="outlined" startIcon={<UploadFile />} onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                    {t('timetable.replaceExcel')}
+                  </Button>
+                </Stack>
+              </Stack>
+            ) : (
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' } }}>
+                <Box sx={{
+                  width: 44, height: 44, borderRadius: 2, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(245, 158, 11, 0.12)', color: 'warning.main',
+                }}>
+                  <WarningAmber />
+                </Box>
+                <Box sx={{ flex: 1 }}>
+                  <Typography sx={{ fontSize: 14, fontWeight: 700 }}>{t('timetable.noDataTitle')}</Typography>
+                  <Typography variant="caption" sx={{ color: 'grey.600' }}>{t('timetable.noDataHint')}</Typography>
+                </Box>
+                <Button variant="contained" size="large" startIcon={<UploadFile />} onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                  {t('timetable.uploadExcel')}
+                </Button>
+              </Stack>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card sx={{ mb: 2.5 }}>
         <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>

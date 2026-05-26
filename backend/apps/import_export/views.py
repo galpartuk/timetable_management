@@ -1,15 +1,16 @@
 import io
 from collections import Counter
 
+from django.core.files.base import ContentFile
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.school.models import School
+from apps.school.models import School, SchoolClass
 from apps.scheduling.models import Timetable, TimetableEntry
 from apps.subjects.models import Subject, Teacher, TeachingAssignment
 
@@ -175,6 +176,11 @@ def upload_excel(request):
         is_dry_run=dry_run,
     )
 
+    # Keep the raw bytes so we can persist the source file on commit (analyze
+    # consumes the stream, so read it up front and rewind for the parser).
+    raw_bytes = file.read()
+    file.seek(0)
+
     try:
         # Phase 1: analyze (no DB writes).
         parsed = analyze(file, file_name=file.name)
@@ -208,6 +214,9 @@ def upload_excel(request):
             'assignments_updated': result.assignments_updated,
             'sheets_seen': parsed.sheets_seen,
         }
+        # Persist the source file so the user can see/re-download the Excel
+        # behind the currently-loaded data.
+        import_log.source_file.save(file.name, ContentFile(raw_bytes), save=False)
         import_log.status = ImportLog.Status.COMPLETED
         import_log.save()
         return Response({
@@ -280,8 +289,56 @@ def import_logs(request):
         'roles_imported': log.roles_imported,
         'warnings': log.warnings,
         'errors': log.errors,
+        'has_file': bool(log.source_file),
     } for log in logs[:20]]
     return Response(data)
+
+
+@api_view(['GET'])
+def current_data_source(request):
+    """Summary of the data currently loaded for a school: the most recent
+    successful import (file name + when), whether its source .xlsx is stored,
+    and LIVE counts from the DB (not the import-time counts — the data may have
+    changed since). Drives the "loaded data" panel on the timetable page."""
+    school_id = request.query_params.get('school_id')
+    if not school_id:
+        return Response({'error': 'school_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    last = (
+        ImportLog.objects
+        .filter(school_id=school_id, status=ImportLog.Status.COMPLETED, is_dry_run=False)
+        .order_by('-uploaded_at')
+        .first()
+    )
+
+    counts = {
+        'teachers': Teacher.objects.filter(school_id=school_id).count(),
+        'classes': SchoolClass.objects.filter(grade__school_id=school_id).count(),
+        'subjects': Subject.objects.filter(school_id=school_id).count(),
+        'assignments': TeachingAssignment.objects.filter(subject__school_id=school_id).count(),
+    }
+    counts['has_data'] = any(counts.values())
+
+    source = None
+    if last:
+        source = {
+            'log_id': last.id,
+            'file_name': last.file_name,
+            'uploaded_at': last.uploaded_at,
+            'has_file': bool(last.source_file),
+        }
+    return Response({'source': source, 'counts': counts})
+
+
+@api_view(['GET'])
+def download_import_file(request, log_id):
+    """Stream back the stored source .xlsx for an import log."""
+    log = ImportLog.objects.filter(id=log_id).first()
+    if not log or not log.source_file:
+        return Response({'error': 'הקובץ לא נמצא'}, status=status.HTTP_404_NOT_FOUND)
+    return FileResponse(
+        log.source_file.open('rb'), as_attachment=True, filename=log.file_name,
+    )
 
 
 @api_view(['GET'])

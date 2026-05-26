@@ -11,6 +11,12 @@ class ImportLog(models.Model):
 
     school = models.ForeignKey('school.School', on_delete=models.CASCADE, related_name='import_logs')
     file_name = models.CharField(max_length=255, verbose_name='שם קובץ')
+    # The actual uploaded .xlsx, kept so the user can see/re-download the
+    # source of the currently-loaded data. Only persisted on a real (non
+    # dry-run) commit. Null for older logs and for failed imports.
+    source_file = models.FileField(
+        upload_to='imports/', null=True, blank=True, verbose_name='קובץ מקור',
+    )
     uploaded_at = models.DateTimeField(auto_now_add=True, verbose_name='הועלה ב')
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.PENDING, verbose_name='סטטוס',

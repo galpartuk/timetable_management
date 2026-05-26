@@ -47,39 +47,71 @@ def _find_conflicts(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
             by_slot_room[(e.time_slot_id, e.room_id)].append(e)
 
     conflicts = []
-    for (_slot, _teacher), es in by_slot_teacher.items():
-        if len(es) > 1:
-            conflicts.append({
-                'kind': 'teacher_double_booked',
-                'teacher': es[0].teacher.full_name if hasattr(es[0].teacher, 'full_name') else str(es[0].teacher),
-                'time_slot': str(es[0].time_slot),
-                'entries': [{'id': e.id, 'class': str(e.school_class), 'subject': str(e.subject)} for e in es],
-            })
-    for (_slot, _cls), es in by_slot_class.items():
-        if len(es) > 1:
-            conflicts.append({
-                'kind': 'class_double_booked',
-                'class': str(es[0].school_class),
-                'time_slot': str(es[0].time_slot),
-                'entries': [{'id': e.id, 'subject': str(e.subject), 'teacher': str(e.teacher)} for e in es],
-            })
-    for (_slot, _room), es in by_slot_room.items():
-        if len(es) > 1:
-            conflicts.append({
-                'kind': 'room_double_booked',
-                'room': str(es[0].room),
-                'time_slot': str(es[0].time_slot),
-                'entries': [{'id': e.id, 'class': str(e.school_class), 'teacher': str(e.teacher)} for e in es],
-            })
+    pooled_groups = 0
 
-    return {'count': len(conflicts), 'conflicts': conflicts[:50]}
+    # Pooling caveat: the data model intentionally allows several entries to
+    # share one (slot, teacher) or one (slot, class) — that's an ability-group
+    # lesson (הקבצה). A teacher teaches one cross-class group → the solver
+    # materializes one row per contributing class; a class splits into parallel
+    # tracks → one row per track/teacher. In every such case the rows share the
+    # *same subject*. So multiple entries in a slot are a real double-booking
+    # ONLY when they span more than one subject; same-subject groupings are
+    # intentional pools and must not be reported as conflicts.
+    for (_slot, _teacher), es in by_slot_teacher.items():
+        if len(es) <= 1:
+            continue
+        if len({e.subject_id for e in es}) == 1:
+            pooled_groups += 1
+            continue
+        conflicts.append({
+            'kind': 'teacher_double_booked',
+            'teacher': es[0].teacher.full_name if hasattr(es[0].teacher, 'full_name') else str(es[0].teacher),
+            'time_slot': str(es[0].time_slot),
+            'entries': [{'id': e.id, 'class': str(e.school_class), 'subject': str(e.subject)} for e in es],
+        })
+    for (_slot, _cls), es in by_slot_class.items():
+        if len(es) <= 1:
+            continue
+        if len({e.subject_id for e in es}) == 1:
+            pooled_groups += 1
+            continue
+        conflicts.append({
+            'kind': 'class_double_booked',
+            'class': str(es[0].school_class),
+            'time_slot': str(es[0].time_slot),
+            'entries': [{'id': e.id, 'subject': str(e.subject), 'teacher': str(e.teacher)} for e in es],
+        })
+    for (_slot, _room), es in by_slot_room.items():
+        if len(es) <= 1:
+            continue
+        if len({e.subject_id for e in es}) == 1:
+            continue  # same pooled lesson sharing its room — not a clash
+        conflicts.append({
+            'kind': 'room_double_booked',
+            'room': str(es[0].room),
+            'time_slot': str(es[0].time_slot),
+            'entries': [{'id': e.id, 'class': str(e.school_class), 'teacher': str(e.teacher)} for e in es],
+        })
+
+    return {
+        'count': len(conflicts),
+        'conflicts': conflicts[:50],
+        # Same-subject co-scheduled groups that were recognised as intentional
+        # ability-group pools (הקבצה) and deliberately NOT counted as conflicts.
+        'pooled_groups_ignored': pooled_groups,
+    }
 
 
 register_tool(Tool(
     name='find_conflicts',
     description=(
         'Find scheduling conflicts in a timetable: a teacher in two places '
-        'at once, a class in two places at once, or a room double-booked.'
+        'at once, a class in two places at once, or a room double-booked. '
+        'Ability-group (הקבצה) lessons, where one subject is co-scheduled '
+        'across several classes or split across parallel teachers in the same '
+        'slot, are intentional and are NOT conflicts; they are reported '
+        'separately as "pooled_groups_ignored". Only cross-subject overlaps '
+        'count as real conflicts.'
     ),
     input_schema={
         'type': 'object',
