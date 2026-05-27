@@ -39,6 +39,40 @@ def is_generating(timetable_id: int) -> bool:
         return timetable_id in _inflight
 
 
+def recover_orphaned_builds() -> int:
+    """Reset timetables left in 'generating' from a previous process.
+
+    Builds run in a daemon thread tied to this process. If the server
+    restarted or crashed mid-build, the thread died but the row is still
+    'generating' — and nothing alive will ever finish it, so the UI would
+    poll forever. At startup the in-memory ``_inflight`` set is always empty,
+    so every 'generating' row is by definition orphaned. Mark them failed
+    with an explanatory log.
+
+    Best-effort: never raises. Called from AppConfig.ready(), where the DB
+    table may not exist yet (e.g. before the first migrate)."""
+    try:
+        orphaned = list(
+            Timetable.objects.filter(status=Timetable.Status.GENERATING)
+            .values_list('id', flat=True)
+        )
+        if not orphaned:
+            return 0
+        Timetable.objects.filter(id__in=orphaned).update(
+            status=Timetable.Status.FAILED,
+            solver_log=(
+                'הבנייה הופסקה עקב הפעלה מחדש של השרת — נא להפעיל בנייה מחדש.\n'
+                'Build was interrupted by a server restart — please rebuild.'
+            ),
+            progress={},
+        )
+        logger.warning('recovered %d orphaned generating timetable(s): %s',
+                       len(orphaned), orphaned)
+        return len(orphaned)
+    except Exception:  # pragma: no cover — DB may be unmigrated/unavailable
+        return 0
+
+
 def start_generation(timetable: Timetable, *, max_time_seconds: int = 300) -> bool:
     """Kick off a background build for ``timetable``. Returns True if a
     new thread was started, False if a build for this timetable was
