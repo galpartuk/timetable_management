@@ -35,7 +35,8 @@ const STATUS_CHIP: Record<string, 'default' | 'primary' | 'success' | 'error' | 
 };
 
 interface BuildProgress {
-  startedAt: number;        // client ms when polling began (drives the elapsed clock)
+  startedAt: number;        // client ms when polling began (fallback anchor)
+  startedAtServer?: number; // server epoch seconds the build actually began
   phase?: string;           // starting | loading | building | solving | writing
   solutions?: number;
   objective?: number;
@@ -199,6 +200,7 @@ export default function TimetablePage() {
         const p = r.data.progress || {};
         setBuild((prev) => ({
           startedAt: prev?.startedAt ?? startedAtMs,
+          startedAtServer: p.started_at ?? prev?.startedAtServer,
           phase: p.phase ?? prev?.phase,
           solutions: p.solutions,
           objective: p.objective,
@@ -404,7 +406,10 @@ export default function TimetablePage() {
       {/* Live build progress — shown while the solver runs so it never looks
           stuck. Phase text + an advancing bar + solutions found so far. */}
       {generating && build && (() => {
-        const elapsed = Math.max(0, Math.floor((nowTs - build.startedAt) / 1000));
+        // Anchor the clock to the server's real build-start time when known,
+        // so it stays accurate even if the page was reopened mid-build.
+        const anchorMs = build.startedAtServer ? build.startedAtServer * 1000 : build.startedAt;
+        const elapsed = Math.max(0, Math.floor((nowTs - anchorMs) / 1000));
         const mm = Math.floor(elapsed / 60);
         const elapsedStr = `${mm}:${String(elapsed % 60).padStart(2, '0')}`;
         const phaseLabel = PHASE_LABELS[build.phase ?? '']?.[isRtl ? 'he' : 'en']
