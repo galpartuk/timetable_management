@@ -34,6 +34,22 @@ const STATUS_CHIP: Record<string, 'default' | 'primary' | 'success' | 'error' | 
   published: 'warning',
 };
 
+interface BuildProgress {
+  startedAt: number;        // client ms when polling began (drives the elapsed clock)
+  phase?: string;           // starting | loading | building | solving | writing
+  solutions?: number;
+  objective?: number;
+  maxTime?: number;         // solver time budget in seconds
+}
+
+const PHASE_LABELS: Record<string, { he: string; en: string }> = {
+  starting: { he: 'מתחיל…', en: 'Starting…' },
+  loading:  { he: 'טוען נתונים…', en: 'Loading data…' },
+  building: { he: 'בונה את המודל…', en: 'Building model…' },
+  solving:  { he: 'מחשב את הפתרון הטוב ביותר…', en: 'Searching for the best solution…' },
+  writing:  { he: 'כותב את המערכת…', en: 'Writing the timetable…' },
+};
+
 export default function TimetablePage() {
   const { t, i18n } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,6 +73,9 @@ export default function TimetablePage() {
   const [dataSource, setDataSource] = useState<DataSource | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [build, setBuild] = useState<BuildProgress | null>(null);
+  const [nowTs, setNowTs] = useState(Date.now());
+  const pollingRef = useRef(false);
   const isRtl = i18n.language === 'he';
 
   const loadDataSource = () =>
@@ -159,6 +178,49 @@ export default function TimetablePage() {
     return quality.classes.find((c) => c.id === selectedId) || null;
   }, [quality, selectedId, viewMode]);
 
+  // Poll a generating timetable until it finishes, mirroring backend
+  // progress into `build` so the UI can show a live status bar. Guarded by
+  // pollingRef so we never run two pollers for one build.
+  const pollUntilDone = (ttId: number, startedAtMs: number) => {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+    setGenerating(true);
+    setBuild({ startedAt: startedAtMs, phase: 'starting', maxTime: 300 });
+    const giveUpAt = Date.now() + 15 * 60 * 1000; // 15min safety net
+    const ticker = setInterval(async () => {
+      try {
+        const r = await getTimetable(ttId);
+        const p = r.data.progress || {};
+        setBuild((prev) => ({
+          startedAt: prev?.startedAt ?? startedAtMs,
+          phase: p.phase ?? prev?.phase,
+          solutions: p.solutions,
+          objective: p.objective,
+          maxTime: p.max_time_seconds ?? prev?.maxTime ?? 300,
+        }));
+        if (r.data.status !== 'generating') {
+          clearInterval(ticker);
+          pollingRef.current = false;
+          setSelectedTT(r.data);
+          getTimetables().then((res) => setTimetables(res.data.results ?? []));
+          if (r.data.status === 'failed') {
+            setError(isRtl ? 'הבנייה האוטומטית נכשלה — בדקו את לוג הבנייה.' : 'Generation failed — see solver log.');
+          }
+          setGenerating(false);
+          setBuild(null);
+        } else if (Date.now() > giveUpAt) {
+          clearInterval(ticker);
+          pollingRef.current = false;
+          setError(isRtl ? 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.' : 'Build exceeded 15 minutes — check the server log.');
+          setGenerating(false);
+          setBuild(null);
+        }
+      } catch {
+        // Network blip — keep polling until the safety net trips.
+      }
+    }, 2000);
+  };
+
   const handleGenerate = async () => {
     // Kick off the background build. The backend returns 202 immediately
     // with the row already flipped to 'generating'; the actual solve
@@ -166,7 +228,6 @@ export default function TimetablePage() {
     // build can't cause the empty-JSON-body bug we used to hit when the
     // reverse proxy killed long requests.
     if (!selectedTT) return;
-    setGenerating(true);
     setError('');
     try {
       await generateTimetable(selectedTT.id);
@@ -177,34 +238,28 @@ export default function TimetablePage() {
       if (code !== 409) {
         setError(err.response?.data?.error || err.response?.data?.detail
           || (isRtl ? 'שגיאה ביצירת מערכת שעות' : 'Failed to generate timetable'));
-        setGenerating(false);
         return;
       }
     }
-    const ttId = selectedTT.id;
-    const pollMs = 2000;
-    const giveUpAt = Date.now() + 15 * 60 * 1000; // 15min safety net
-    const ticker = setInterval(async () => {
-      try {
-        const r = await getTimetable(ttId);
-        if (r.data.status !== 'generating') {
-          clearInterval(ticker);
-          setSelectedTT(r.data);
-          getTimetables().then((res) => setTimetables(res.data.results ?? []));
-          if (r.data.status === 'failed') {
-            setError(isRtl ? 'הבנייה האוטומטית נכשלה — בדקו את לוג הבנייה.' : 'Generation failed — see solver log.');
-          }
-          setGenerating(false);
-        } else if (Date.now() > giveUpAt) {
-          clearInterval(ticker);
-          setError(isRtl ? 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.' : 'Build exceeded 15 minutes — check the server log.');
-          setGenerating(false);
-        }
-      } catch {
-        // Network blip — keep polling until the safety net trips.
-      }
-    }, pollMs);
+    pollUntilDone(selectedTT.id, Date.now());
   };
+
+  // Tick a clock every second while a build runs so the elapsed time and
+  // progress bar advance smoothly between polls.
+  useEffect(() => {
+    if (!generating) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [generating]);
+
+  // If we land on the page while a build is already running (e.g. after a
+  // refresh), start showing progress for it too.
+  useEffect(() => {
+    if (selectedTT?.status === 'generating' && !pollingRef.current) {
+      pollUntilDone(selectedTT.id, Date.now());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTT?.id, selectedTT?.status]);
 
   const grid: Record<string, any> = {};
   entries.forEach((entry) => {
@@ -293,6 +348,49 @@ export default function TimetablePage() {
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {/* Live build progress — shown while the solver runs so it never looks
+          stuck. Phase text + an advancing bar + solutions found so far. */}
+      {generating && build && (() => {
+        const elapsed = Math.max(0, Math.floor((nowTs - build.startedAt) / 1000));
+        const mm = Math.floor(elapsed / 60);
+        const elapsedStr = `${mm}:${String(elapsed % 60).padStart(2, '0')}`;
+        const phaseLabel = PHASE_LABELS[build.phase ?? '']?.[isRtl ? 'he' : 'en']
+          ?? (isRtl ? 'מעבד…' : 'Working…');
+        const solving = build.phase === 'solving';
+        const barValue = solving && build.maxTime
+          ? Math.min(95, Math.max(3, (elapsed / build.maxTime) * 100))
+          : undefined;
+        return (
+          <Card sx={{ mb: 2.5 }} className="no-print">
+            <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+              <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.5 }}>
+                <AutoAwesome sx={{ color: 'primary.main' }} fontSize="small" />
+                <Typography sx={{ fontSize: 14, fontWeight: 700, flex: 1 }}>
+                  {phaseLabel}
+                </Typography>
+                <Typography className="tabular-nums" sx={{ fontSize: 13, color: 'grey.600' }}>
+                  {elapsedStr}
+                </Typography>
+              </Stack>
+              <LinearProgress
+                variant={barValue != null ? 'determinate' : 'indeterminate'}
+                value={barValue}
+                sx={{ height: 8, borderRadius: 4 }}
+              />
+              <Typography variant="caption" sx={{ color: 'grey.600', mt: 1, display: 'block' }}>
+                {solving && (build.solutions ?? 0) > 0
+                  ? (isRtl
+                      ? `נמצאו ${build.solutions} פתרונות — משפר את האיכות${build.objective != null ? ` (ניקוד: ${Math.round(build.objective)})` : ''}`
+                      : `${build.solutions} solutions found — improving${build.objective != null ? ` (score: ${Math.round(build.objective)})` : ''}`)
+                  : (isRtl
+                      ? 'הבנייה רצה ברקע — אפשר להמשיך לעבוד, נעדכן כשתסתיים.'
+                      : 'Running in the background — feel free to keep working; we’ll update when it’s done.')}
+              </Typography>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Loaded-data panel — shows which Excel powers the current data, with
           quick download + replace, or a prominent upload prompt when empty. */}
