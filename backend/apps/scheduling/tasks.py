@@ -92,13 +92,15 @@ def _run_builder(timetable_id: int, max_time_seconds: int) -> None:
             tt.save(update_fields=['status', 'solver_log'])
             return
 
-        # solve_timetable may have written to solver_log itself; refresh
-        # so our status flip doesn't overwrite it.
-        tt.refresh_from_db(fields=['solver_log'])
+        # solve_timetable sets tt.solver_log in-memory on every path (success
+        # and failure) but doesn't persist it — `tt` is the same object it
+        # mutated, so save that log alongside the final status. (Refreshing
+        # here instead would discard the log, which is the diagnostic the user
+        # sees when a build fails.)
         tt.status = (
             Timetable.Status.COMPLETED if success else Timetable.Status.FAILED
         )
-        tt.save(update_fields=['status'])
+        tt.save(update_fields=['status', 'solver_log'])
     finally:
         with _inflight_lock:
             _inflight.discard(timetable_id)

@@ -75,6 +75,9 @@ export default function TimetablePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [build, setBuild] = useState<BuildProgress | null>(null);
   const [nowTs, setNowTs] = useState(Date.now());
+  const [buildLog, setBuildLog] = useState('');
+  const [showLog, setShowLog] = useState(false);
+  const [buildFailed, setBuildFailed] = useState(false);
   const pollingRef = useRef(false);
   const isRtl = i18n.language === 'he';
 
@@ -185,6 +188,9 @@ export default function TimetablePage() {
     if (pollingRef.current) return;
     pollingRef.current = true;
     setGenerating(true);
+    setBuildLog('');
+    setShowLog(false);
+    setBuildFailed(false);
     setBuild({ startedAt: startedAtMs, phase: 'starting', maxTime: 300 });
     const giveUpAt = Date.now() + 15 * 60 * 1000; // 15min safety net
     const ticker = setInterval(async () => {
@@ -204,7 +210,8 @@ export default function TimetablePage() {
           setSelectedTT(r.data);
           getTimetables().then((res) => setTimetables(res.data.results ?? []));
           if (r.data.status === 'failed') {
-            setError(isRtl ? 'הבנייה האוטומטית נכשלה — בדקו את לוג הבנייה.' : 'Generation failed — see solver log.');
+            setBuildFailed(true);
+            setBuildLog((r.data.solver_log || '').trim());
           }
           setGenerating(false);
           setBuild(null);
@@ -257,6 +264,22 @@ export default function TimetablePage() {
   useEffect(() => {
     if (selectedTT?.status === 'generating' && !pollingRef.current) {
       pollUntilDone(selectedTT.id, Date.now());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTT?.id, selectedTT?.status]);
+
+  // Show the failure reason whenever a failed timetable is viewed. The list
+  // payload omits solver_log, so fetch the detail. Clear it for healthy ones.
+  useEffect(() => {
+    if (pollingRef.current) return; // a live build owns this UI
+    if (selectedTT?.status === 'failed') {
+      getTimetable(selectedTT.id)
+        .then((r) => { setBuildFailed(true); setBuildLog((r.data.solver_log || '').trim()); })
+        .catch(() => {});
+    } else {
+      setBuildFailed(false);
+      setBuildLog('');
+      setShowLog(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTT?.id, selectedTT?.status]);
@@ -348,6 +371,35 @@ export default function TimetablePage() {
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {buildFailed && (
+        <Alert
+          severity="error"
+          sx={{ mb: buildLog && showLog ? 1 : 2 }}
+          action={buildLog
+            ? <Button color="inherit" size="small" onClick={() => setShowLog((s) => !s)}>
+                {showLog ? (isRtl ? 'הסתר פרטים' : 'Hide details') : (isRtl ? 'הצג פרטים' : 'Show details')}
+              </Button>
+            : undefined}
+        >
+          {isRtl
+            ? 'הבנייה האוטומטית נכשלה. בדקו את הפרטים הטכניים לסיבה.'
+            : 'Generation failed. Check the technical details for the reason.'}
+        </Alert>
+      )}
+      {buildFailed && buildLog && showLog && (
+        <Box
+          component="pre"
+          dir="rtl"
+          sx={{
+            mb: 2, p: 1.5, borderRadius: 2, bgcolor: 'grey.900', color: 'grey.100',
+            fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word', maxHeight: 240, overflow: 'auto',
+          }}
+        >
+          {buildLog}
+        </Box>
+      )}
 
       {/* Live build progress — shown while the solver runs so it never looks
           stuck. Phase text + an advancing bar + solutions found so far. */}
