@@ -61,6 +61,7 @@ correctly.
 """
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -74,6 +75,49 @@ from apps.scheduling.models import Constraint, TimetableEntry
 from solver.constraints import (
     HANDLERS, SOFT_HANDLERS, Lesson, SolverContext, apply_teacher_day_off,
 )
+
+
+def _set_progress(timetable, **fields) -> None:
+    """Merge ``fields`` into timetable.progress and persist just that column.
+    Best-effort: progress reporting must never break a build."""
+    try:
+        progress = dict(timetable.progress or {})
+        progress.update(fields)
+        timetable.progress = progress
+        timetable.save(update_fields=['progress'])
+    except Exception:  # pragma: no cover — never let telemetry kill a solve
+        pass
+
+
+class _ProgressCallback(cp_model.CpSolverSolutionCallback):
+    """Reports live solve progress (solutions found, objective, elapsed) to the
+    Timetable row. DB writes are throttled so a flurry of quick improvements
+    doesn't hammer the database."""
+
+    def __init__(self, timetable, *, min_interval: float = 0.8):
+        super().__init__()
+        self._tt = timetable
+        self._min_interval = min_interval
+        self._count = 0
+        self._last_write = 0.0
+
+    def on_solution_callback(self) -> None:
+        self._count += 1
+        now = time.monotonic()
+        if now - self._last_write < self._min_interval:
+            return
+        self._last_write = now
+        try:
+            objective = self.objective_value
+        except Exception:
+            objective = None
+        _set_progress(
+            self._tt,
+            phase='solving',
+            solutions=self._count,
+            objective=objective,
+            wall_time=round(self.wall_time, 1),
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,6 +498,7 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     touching existing entries (so the caller can retry safely).
     """
     school = timetable.school
+    _set_progress(timetable, phase='loading')
 
     classes = list(SchoolClass.objects.filter(grade__school=school))
     time_slots = list(TimeSlot.objects.filter(school=school).order_by('day', 'period'))
@@ -480,6 +525,7 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
         timetable.solver_log = 'אין בלוקים לתזמון (כל השיבוצים ללא שעות)'
         return False
 
+    _set_progress(timetable, phase='building')
     num_slots = len(time_slots)
     model = cp_model.CpModel()
 
@@ -711,7 +757,8 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
             decision_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE,
         )
 
-    status = solver.solve(model)
+    _set_progress(timetable, phase='solving', solutions=0)
+    status = solver.solve(model, _ProgressCallback(timetable))
     status_label = {
         cp_model.OPTIMAL: 'אופטימלי',
         cp_model.FEASIBLE: 'ישים',
@@ -735,6 +782,7 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
         return False
 
     # ── Materialize TimetableEntry rows ──────────────────────────────────
+    _set_progress(timetable, phase='writing')
     TimetableEntry.objects.filter(timetable=timetable).delete()
     entries = []
     for b in blocks:

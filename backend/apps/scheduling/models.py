@@ -76,6 +76,9 @@ class Timetable(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='נוצר ב')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='עודכן ב')
     solver_log = models.TextField(blank=True, verbose_name='לוג פתרון')
+    # Live build progress, polled by the client while status=generating.
+    # Shape: {phase, max_time_seconds, started_at, solutions, objective, wall_time}.
+    progress = models.JSONField(default=dict, blank=True, verbose_name='התקדמות')
 
     class Meta:
         verbose_name = 'מערכת שעות'

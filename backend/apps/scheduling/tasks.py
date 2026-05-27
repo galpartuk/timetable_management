@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import traceback
 from typing import Set
 
@@ -50,7 +51,12 @@ def start_generation(timetable: Timetable, *, max_time_seconds: int = 300) -> bo
 
     timetable.status = Timetable.Status.GENERATING
     timetable.solver_log = ''
-    timetable.save(update_fields=['status', 'solver_log'])
+    timetable.progress = {
+        'phase': 'starting',
+        'max_time_seconds': max_time_seconds,
+        'started_at': time.time(),
+    }
+    timetable.save(update_fields=['status', 'solver_log', 'progress'])
 
     thread = threading.Thread(
         target=_run_builder,
