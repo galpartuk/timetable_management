@@ -215,8 +215,9 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
             textAlign: 'center',
             mb: 1,
           }}
+          title={i18n.language === 'he' ? 'שעון ישראל (Asia/Jerusalem)' : 'Israel time (Asia/Jerusalem)'}
         >
-          build {__BUILD_TIMESTAMP__}
+          build {__BUILD_TIMESTAMP__} {i18n.language === 'he' ? '(שעון ישראל)' : 'IL'}
         </Typography>
 
         <Box sx={{ display: 'flex', gap: 0.75 }}>

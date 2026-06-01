@@ -21,11 +21,17 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from apps.scheduling.models import Constraint
-from apps.school.models import School, SchoolClass
+from apps.school.models import School, SchoolClass, TimeSlot
 from apps.subjects.models import Subject, Teacher
 
 from .base import Tool, ToolContext, register_tool
 from .tags import _coerce_day
+
+
+# Marker stored on auto-managed teacher_availability constraints created by
+# set_teacher_day_off. Lets us find + replace + delete them idempotently and
+# lets the Constraints UI render them as "auto-generated".
+AUTO_DAY_OFF_MARKER = 'auto_day_off'
 
 
 def _default_school_id(ctx: ToolContext) -> int | None:
@@ -62,6 +68,7 @@ def _list_constraints(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]
     )
     out = []
     for c in qs:
+        params = c.parameters if isinstance(c.parameters, dict) else {}
         out.append({
             'id': c.id,
             'type': c.constraint_type,
@@ -74,6 +81,7 @@ def _list_constraints(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]
             'subject': str(c.subject) if c.subject_id else None,
             'tag': c.tag.name if c.tag_id else None,
             'parameters': c.parameters,
+            'auto_day_off': bool(params.get(AUTO_DAY_OFF_MARKER)),
         })
     return {'count': len(out), 'constraints': out}
 
@@ -91,7 +99,7 @@ register_tool(Tool(
         'properties': {'school_id': {'type': 'integer'}},
     },
     handler=_list_constraints,
-    modules=['timetable', 'constraints'],
+    modules=['timetable', 'constraints', 'global'],
 ))
 
 
@@ -293,7 +301,7 @@ register_tool(Tool(
         },
     },
     handler=_create_constraint,
-    modules=['timetable', 'constraints'],
+    modules=['timetable', 'constraints', 'global'],
     requires_confirmation=True,
     preview_template='יצירת אילוץ "{input.constraint_type}" (עדיפות {input.priority})',
 ))
@@ -335,7 +343,7 @@ register_tool(Tool(
         },
     },
     handler=_delete_constraint,
-    modules=['timetable', 'constraints'],
+    modules=['timetable', 'constraints', 'global'],
     requires_confirmation=True,
     preview_template='מחיקת אילוץ #{input.constraint_id}',
 ))
@@ -362,13 +370,90 @@ def _set_teacher_day_off(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, A
 
     teacher.day_off = day
     teacher.save(update_fields=['day_off'])
+
+    # Also mirror to a real Constraint row so the day-off shows up in the
+    # Constraints UI (it's the user-visible source of truth — Teacher.day_off
+    # is the legacy storage the solver still honours). Marked with
+    # AUTO_DAY_OFF_MARKER so the backfill command, list-style filters, and a
+    # future "clear day off" call can find it idempotently.
+    constraint_id = _sync_day_off_constraint(teacher, day, school_id)
+
     return {
         'updated': True,
         'teacher_id': teacher.id,
         'teacher': str(teacher),
         'day_off': day,
+        'constraint_id': constraint_id,
         'next_step': 'Re-run the solver via run_generator so the day off is applied.',
     }
+
+
+def _sync_day_off_constraint(teacher: Teacher, day: int | None, school_id: int) -> int | None:
+    """Keep the auto teacher_availability constraint in sync with
+    Teacher.day_off. Returns the constraint id (or None if cleared).
+
+    Filter in Python rather than via JSONField __contains so the code works
+    on any DB backend regardless of JSON1 availability — a teacher only has
+    a handful of teacher_availability constraints, so the cost is trivial."""
+    candidates = list(
+        Constraint.objects.filter(
+            school_id=school_id,
+            teacher=teacher,
+            constraint_type='teacher_availability',
+        )
+    )
+    auto = [c for c in candidates if isinstance(c.parameters, dict)
+            and c.parameters.get(AUTO_DAY_OFF_MARKER)]
+    existing = auto[0] if auto else None
+    # If multiple auto rows exist (shouldn't happen, but be defensive on
+    # backfill races), drop the extras.
+    for stale in auto[1:]:
+        stale.delete()
+    if day is None:
+        if existing:
+            existing.delete()
+        return None
+
+    # Build the full list of slots for the chosen day from the school's
+    # TimeSlot rows — every period that day is blocked.
+    periods = list(
+        TimeSlot.objects
+        .filter(school_id=school_id, day=day)
+        .order_by('period')
+        .values_list('period', flat=True)
+    )
+    # Fall back to a reasonable default if the school has no TimeSlot rows
+    # yet — the solver will skip slots that don't exist anyway.
+    if not periods:
+        periods = list(range(1, 11))
+    slots = [{'day': day, 'period': p} for p in periods]
+    name = f'יום חופש: {teacher} ({_day_name_he(day)})'
+    params = {AUTO_DAY_OFF_MARKER: True, 'unavailable': slots}
+
+    if existing:
+        existing.name = name
+        existing.parameters = params
+        existing.is_active = True
+        existing.priority = Constraint.Priority.HARD
+        existing.save(update_fields=['name', 'parameters', 'is_active', 'priority'])
+        return existing.id
+    created = Constraint.objects.create(
+        school_id=school_id,
+        name=name,
+        description='נוצר אוטומטית על-ידי set_teacher_day_off',
+        constraint_type='teacher_availability',
+        priority=Constraint.Priority.HARD,
+        teacher=teacher,
+        parameters=params,
+    )
+    return created.id
+
+
+_DAY_NAMES_HE = {1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי'}
+
+
+def _day_name_he(d: int | None) -> str:
+    return _DAY_NAMES_HE.get(d or 0, str(d))
 
 
 register_tool(Tool(
@@ -390,7 +475,7 @@ register_tool(Tool(
         },
     },
     handler=_set_teacher_day_off,
-    modules=['timetable', 'constraints'],
+    modules=['timetable', 'constraints', 'global'],
     requires_confirmation=True,
     preview_template='קביעת יום חופש למורה #{input.teacher_id}: יום {input.day}',
 ))

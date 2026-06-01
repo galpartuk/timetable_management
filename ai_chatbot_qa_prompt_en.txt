@@ -1,0 +1,324 @@
+================================================================
+END-TO-END QA WALKTHROUGH (English)
+Primary goal: verify the in-app AI agent can EDIT, UPDATE, and FIX
+timetables correctly. Secondary goal: surface anything broken or
+missing across the rest of the app.
+================================================================
+
+HOW TO USE THIS PROMPT
+- You (the Chrome Claude agent) are driving the browser as a real
+  user of the school-timetable web app.
+- Log in to the app, then open each section listed below in order.
+- For the AI parts: open the "Smart Assistant" / spark button at the
+  bottom of the Timetable page and paste the relevant section into
+  the chat.
+- Work step by step. USE THE TOOLS — do not guess based on what the
+  UI looks like. Quote exact numbers and error messages.
+- Anything that modifies data (Part C and Part D) must run on a
+  timetable you are allowed to mutate. If unsure, create a fresh
+  "QA Sandbox" timetable first.
+- Each AI action that mutates data opens a confirmation card. PERFORM
+  EACH ACTION EXACTLY ONCE. Do not retry, do not undo unless asked.
+
+At the very end, deliver one consolidated report with three buckets:
+   ✓ Works as expected
+   ⚠ Broken / surprising / wrong (with exact reproduction + message)
+   ➤ Missing or worth improving
+
+
+----------------------------------------------------------------
+PART A — UI SWEEP (read-only, no AI yet)
+----------------------------------------------------------------
+The point of Part A is to confirm the static surface area is healthy
+before stressing the AI.
+
+A1. Language + login
+    - Verify the app loads in Hebrew by default (right-to-left layout,
+      sidebar labels in Hebrew). Toggle to English and back; both
+      should look correct (no clipped text, no fallback "key strings"
+      like "timetable.dataLoaded" leaking through).
+    - Log in with the configured admin user. Confirm the user card
+      appears in the sidebar and the footer shows a "build YYYY-MM-DD
+      HH:MM" stamp. The stamp must be Israel local time (Asia/
+      Jerusalem) — note its value and compare to a reliable wall
+      clock; flag any timezone mismatch.
+
+A2. Data source visibility (Excel)
+    - Open the Timetable page. There must be a visible "Loaded data"
+      panel showing what Excel is currently driving the system,
+      including row counts (teachers / classes / assignments / etc.)
+      and the original filename + upload time, if present.
+    - Confirm there is an obvious, single-click button to UPLOAD or
+      REPLACE the Excel file. It must not be hidden behind a menu.
+    - Confirm there is a DOWNLOAD button that returns the original
+      .xlsx (try downloading, then re-open the file locally to verify
+      it's not corrupted).
+    - If no Excel has ever been uploaded, the empty state must be
+      explicit ("no data loaded yet" or equivalent) with an obvious
+      upload CTA.
+
+A3. Constraints page
+    - Navigate to Constraints. Confirm you can choose ALL the
+      following constraint types from the type selector, and that
+      each one renders a sensible form (don't just trust the dropdown
+      — select each and check the form fields make sense):
+        * teacher_availability  (must show a SLOT editor — day +
+          period — not just free text)
+        * max_daily_hours_class
+        * max_daily_hours_teacher
+        * consecutive_hours
+        * lunch_break
+        * consecutive_pair
+        * no_last_period
+        * group_meeting / tags (if exposed)
+    - Create one harmless constraint manually (e.g. a teacher
+      availability slot you can later delete). Confirm:
+        * Form validation kicks in when required fields are empty
+          (submit should be blocked).
+        * After save, the new constraint appears in the table with a
+          human-readable "details" column (NOT a raw JSON blob).
+    - Delete the constraint and confirm it disappears.
+
+A4. Timetable list + detail
+    - Open the Timetable list. For each timetable, status should be
+      one of: draft / generating / completed / failed.
+    - Open a completed timetable. The grid should render without
+      visual glitches; teachers/classes/rooms should be readable;
+      empty cells visibly empty (not "undefined" or "[object Object]").
+    - Open a failed timetable (or generate one with no chance of
+      solving — see Part D). Confirm the failure UI shows:
+        * A clear failure message.
+        * A "show technical details" toggle that reveals the
+          solver_log when expanded.
+
+A5. Build progress
+    - Trigger "Generate timetable" on a real timetable (Part D will
+      do this for real; here just observe the first ~10 seconds).
+    - A progress card must appear and update without a page reload.
+      Verify it shows:
+        * A phase label (e.g. "loading", "building", "solving",
+          "writing") in the active language.
+        * A live elapsed-seconds counter that ticks each second.
+        * For "solving": solution count and current objective if the
+          solver has reported any.
+        * A bounded sense of progress against max_time_seconds (bar
+          or remaining-time hint).
+    - Refresh the page WHILE generating. The progress card must
+      reappear with the SAME elapsed time anchor (it should not
+      reset to zero on reload — the start time is server-anchored).
+    - Cancel/stop is optional; if absent, note it under "missing".
+
+A6. Build banner persists across pages
+    - With a build in flight, click the sidebar to navigate to
+      /constraints, then /dashboard. A slim progress banner must
+      appear at the very top of every page showing the same
+      timetable name, phase, and elapsed time. Clicking the open-in-new
+      icon should jump back to /timetable focused on the building row.
+    - When the build finishes, a success or failure toast should
+      appear in the same banner slot and auto-dismiss after ~8s.
+    - The audit found this missing — the progress card used to
+      vanish on sidebar nav.
+
+A7. F5 (hard reload) during a build
+    - With a build in flight, hit F5. The app must not freeze.
+      Expectation: the page renders within 1-2 seconds, the banner
+      reappears anchored to the same elapsed time, and the timetable
+      detail call returns immediately (entries are intentionally
+      omitted while generating, see P1.1 fix). If the app stalls
+      for >5 seconds, the WAL-mode / serializer-slim fix didn't
+      land — flag as a blocker.
+
+
+----------------------------------------------------------------
+PART B — AI AGENT DIAGNOSTIC (read-only)
+----------------------------------------------------------------
+Open the Smart Assistant on a real completed timetable and paste
+the following requests one by one. After each, summarize what the
+agent did, which tools it called (visible in the action cards),
+and whether the answer matches reality.
+
+B1. "Give me a high-level overview of the currently active
+     timetable: how many lessons, how many teachers and classes are
+     covered, and what its status is."
+     → expect a single read-only summary, no confirmation cards.
+
+B2. "Run a conflict check on the active timetable. In your report,
+     SEPARATE two categories explicitly:
+       (a) real conflicts — same teacher/class/room scheduled for
+           two DIFFERENT subjects at the same time;
+       (b) pooled co-scheduling — the SAME subject taught to several
+           classes simultaneously, or split between several teachers
+           at the same time. These are intentional and must NOT
+           count as conflicts.
+     Report the exact count of real conflicts AND the value of
+     pooled_groups_ignored. If you find yourself reporting dozens of
+     'conflicts', STOP and re-check — they are almost certainly
+     pooled groups, not real conflicts."
+     → expect the tool to return pooled_groups_ignored as a number
+       and a small or zero count of real conflicts on a healthy
+       build. Flag immediately if it reports >0 real conflicts.
+
+B3. "Pick one class and one teacher. Read their personal weekly
+     timetable. Verify the days/periods/subjects look reasonable
+     and call out any 'gaps' (free periods sandwiched between busy
+     periods during the school day)."
+     → expect read tools for class schedule and teacher schedule.
+
+B4. "Run the improvement-suggestions analysis on the current
+     timetable and report the top three actionable items."
+     → expect a single read-only call returning ranked suggestions.
+
+If anything in Part B is wrong, slow, or returns generic text
+without invoking tools — record it. The agent is REQUIRED to use
+tools; narrative-only answers are a regression.
+
+
+----------------------------------------------------------------
+PART C — AI AGENT EDITING (mutates data — be careful)
+----------------------------------------------------------------
+This is the most important section. The agent must understand it is
+EDITING a school timetable on behalf of the user, and must:
+   - Reason about what the user actually wants.
+   - Pick the right tool.
+   - Present a confirmation card with a clear preview.
+   - Apply the change exactly once after the user confirms.
+   - Re-read the timetable to prove the change took effect.
+
+For each step below: paste the request, confirm the action when
+prompted, then ask the agent to verify by re-reading the affected
+class/teacher. Do not undo unless asked.
+
+C1. SIMPLE MOVE
+    "Look at the timetable for class [pick one]. Find one empty
+     slot and one existing lesson that could legitimately move into
+     that slot without creating a real conflict. Move it. After it's
+     applied, read the class timetable again and confirm the lesson
+     is in the new slot and not in the old one."
+
+C2. SIMPLE SWAP
+    "Pick two lessons in the same class and swap their slots. After
+     applying, confirm both lessons ended up in each other's slots
+     and did not snap back."
+
+C3. CONSTRAINT — TEACHER AVAILABILITY
+    "Teacher [pick one] should NOT teach on Sunday during the first
+     period. Create the appropriate constraint and confirm it
+     appears on the Constraints page. Do not rebuild the timetable
+     yet."
+
+C4. CONSTRAINT — DAILY LIMIT (CLASS)
+    "Limit class [pick one] to a maximum of 7 lessons per day. Use
+     the right constraint type (max_daily_hours_class). Show me the
+     confirmation card before you apply it, then apply it."
+
+C5. CONSTRAINT — DAILY LIMIT (TEACHER)
+    "Cap teacher [pick one] at 6 lessons per day, regardless of which
+     class. Use max_daily_hours_teacher. Confirm the row shows up on
+     the Constraints page with a 'Details' summary that mentions the
+     teacher and the 6-hour cap."
+
+C6. CONSTRAINT — CONSECUTIVE PAIR (DOUBLE-PERIOD BLOCK)
+    "I want לבוראטוריה [or any subject your data has] for class [X] to
+     always be scheduled as a double-period (two consecutive periods).
+     Use consecutive_pair. After applying, run a conflict check and
+     then rebuild — verify the resulting schedule actually places it
+     as a double-period block."
+
+C7. CONSTRAINT — TEACHER DAY OFF (CONVERSATIONAL)
+    Use natural language without naming the tool:
+    "Teacher [pick one] told me she can't come in on Wednesdays at
+     all this term. Handle it."
+    → expect the agent to map this to set_teacher_day_off (or
+      equivalent), produce ONE confirmation card, and apply it
+      exactly once.
+    → after apply, OPEN the Constraints page (do not refresh) and
+      verify that a new teacher_availability row appears with an
+      "auto" / "אוטומטי" badge. That row IS the visible mirror of
+      the day-off field — it must not be invisible (P2.4 regression).
+
+C8. AI FROM A NON-TIMETABLE PAGE
+    Navigate to /dashboard. Open the AI assistant from there (do NOT
+    go back to /timetable). Ask:
+    "Run a conflict check on the active timetable."
+    → expect the agent to invoke find_conflicts without asking you
+      to switch pages. The audit found this used to silently fail —
+      tools were route-scoped.
+
+C9. CONFLICT CHECK AFTER EDITS
+    Re-run the conflict check (same wording as B2). The number of
+    REAL conflicts must not have increased due to your edits. If it
+    has — that's a bug; note exactly which edit caused it.
+
+C10. CELL POPOVER + AI HANDOFF
+    Click a cell in the timetable grid. A popover should appear with:
+       - subject, teacher, class, day + period, entry id
+       - "Lock"/"Unlock" button (toggles via existing API)
+       - "Ask AI to move", "Ask AI to swap", "Why is this here?"
+     Click "Ask AI to move". The assistant must open with a pre-filled
+     prompt referencing the lesson; you should not have to retype the
+     entry id. Send the message and verify the agent proposes a single
+     move with a valid free slot, exactly one confirmation card.
+
+
+----------------------------------------------------------------
+PART D — REBUILD LOOP (end-to-end)
+----------------------------------------------------------------
+The whole point of the agent is the conversational adjustment loop:
+user describes a change → agent encodes it as a constraint → user
+rebuilds → user inspects the new build. Verify the loop end to end.
+
+D1. From the Constraints page, confirm the constraints you created
+    in Part C are present.
+
+D2. From the Timetable page, click "Generate timetable" (or
+    equivalent) on a draft/sandbox timetable that includes the new
+    constraints. Observe the progress UI from Part A5 for the full
+    duration.
+
+D3. After completion, ask the agent:
+    "Verify that the constraints I just added are actually respected
+     in the new build. For each constraint, read whatever you need
+     to and tell me whether it holds. Be specific: cite the class or
+     teacher, the day, and the period."
+    → if any constraint is violated, that's the most important bug
+      to report.
+
+D4. Ask the agent:
+    "Compare this rebuild to the previous one at a high level.
+     What got better? What got worse?"
+    → expect a coherent answer with concrete numbers (e.g. gaps,
+      load balance), not vague prose.
+
+D5. (Optional) Stress test failure path:
+    Add an impossible constraint (e.g. limit a class to 1 lesson per
+    day when the data requires 6). Trigger generation. Confirm:
+       - Status flips to "failed" within max_time_seconds.
+       - The failure UI surfaces the solver_log under "technical
+         details" (per A4) — and the log is non-empty.
+    Then DELETE the impossible constraint so the sandbox is left
+    usable.
+
+
+----------------------------------------------------------------
+FINAL REPORT FORMAT
+----------------------------------------------------------------
+Deliver a single consolidated report with three sections:
+
+✓ WORKS
+   - one-line items, each something you actually verified end-to-end
+
+⚠ BROKEN / WRONG / SURPRISING
+   - exact location (page name + button/section)
+   - exact reproduction steps
+   - actual vs expected behaviour
+   - any error message verbatim
+   - severity: blocker / major / minor
+
+➤ MISSING / IMPROVEMENT
+   - things that aren't broken but are clearly absent or clunky for
+     a real teacher/admin using this daily
+
+Be concrete. "AI agent worked" is not useful. "AI agent moved class
+ז'1 math from Sunday p3 to Monday p4 via the move tool, confirmation
+card showed both slots, change persisted after refresh" is useful.
+================================================================

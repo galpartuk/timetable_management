@@ -10,14 +10,19 @@ import type { ModuleContext } from './types';
 interface State {
   ctx: ModuleContext;
   isOpen: boolean;
+  /** One-shot prefill — ChatPanel reads it on open and clears via consumePrefill. */
+  prefill: string | null;
 }
 
 interface Api {
   state: State;
   setContext: (ctx: ModuleContext) => void;
   open: () => void;
+  /** Open the panel with the input pre-filled (used by lesson popover handoffs). */
+  openWith: (prefill: string) => void;
   close: () => void;
   toggle: () => void;
+  consumePrefill: () => string | null;
 }
 
 const DEFAULT_CTX: ModuleContext = { module: 'global', viewState: {}, quickActions: [] };
@@ -26,11 +31,21 @@ const Ctx = createContext<Api | null>(null);
 export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const [ctx, setCtxState] = useState<ModuleContext>(DEFAULT_CTX);
   const [isOpen, setIsOpen] = useState(false);
+  const [prefill, setPrefill] = useState<string | null>(null);
 
   const setContext = useCallback((next: ModuleContext) => setCtxState(next), []);
   const open = useCallback(() => setIsOpen(true), []);
+  const openWith = useCallback((text: string) => {
+    setPrefill(text);
+    setIsOpen(true);
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
   const toggle = useCallback(() => setIsOpen((v) => !v), []);
+  const consumePrefill = useCallback(() => {
+    const v = prefill;
+    setPrefill(null);
+    return v;
+  }, [prefill]);
 
   // Cmd/Ctrl+K opens the Command Center from anywhere.
   useEffect(() => {
@@ -45,9 +60,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   }, [toggle]);
 
   const value = useMemo<Api>(() => ({
-    state: { ctx, isOpen },
-    setContext, open, close, toggle,
-  }), [ctx, isOpen, setContext, open, close, toggle]);
+    state: { ctx, isOpen, prefill },
+    setContext, open, openWith, close, toggle, consumePrefill,
+  }), [ctx, isOpen, prefill, setContext, open, openWith, close, toggle, consumePrefill]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

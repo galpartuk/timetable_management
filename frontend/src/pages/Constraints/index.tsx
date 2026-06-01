@@ -180,7 +180,19 @@ export default function ConstraintsPage() {
               {constraints.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{c.name}</Typography>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                      <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{c.name}</Typography>
+                      {c.auto_day_off && (
+                        <Chip
+                          size="small"
+                          label={isRtl ? 'אוטומטי' : 'auto'}
+                          sx={{ height: 18, fontSize: 10, background: 'rgba(79,70,229,0.10)', color: 'primary.dark' }}
+                          title={isRtl
+                            ? 'נוצר אוטומטית כשיום החופש הוגדר על המורה. מחיקה כאן תבטל גם את יום החופש.'
+                            : 'Auto-created from the teacher\'s day-off. Deleting here also clears the day-off.'}
+                        />
+                      )}
+                    </Stack>
                   </TableCell>
                   <TableCell>
                     <Typography sx={{ fontSize: 13, color: 'grey.600' }}>

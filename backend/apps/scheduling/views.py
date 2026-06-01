@@ -16,6 +16,18 @@ class ConstraintViewSet(viewsets.ModelViewSet):
     serializer_class = ConstraintSerializer
     filterset_fields = ['school', 'constraint_type', 'priority', 'is_active']
 
+    def perform_destroy(self, instance):
+        # When the user deletes a row that's a mirror of Teacher.day_off, also
+        # clear the underlying field — otherwise the auto-sync code would just
+        # recreate the row on the next set_teacher_day_off call, and the
+        # solver would still respect the legacy day_off attribute. Keeps the
+        # two storage locations consistent.
+        params = instance.parameters if isinstance(instance.parameters, dict) else {}
+        if params.get('auto_day_off') and instance.teacher_id:
+            instance.teacher.day_off = None
+            instance.teacher.save(update_fields=['day_off'])
+        instance.delete()
+
 
 class TimetableViewSet(viewsets.ModelViewSet):
     queryset = Timetable.objects.all()
@@ -253,6 +265,31 @@ class TimetableViewSet(viewsets.ModelViewSet):
         Returns per-teacher and per-class window counts, plus aggregate
         scores. Powers the dashboard and teacher-view UI."""
         timetable = self.get_object()
+        # While the solver is running, entries are being deleted and rewritten
+        # — there's nothing meaningful to measure. Return an empty quality
+        # payload immediately so the FE doesn't pay for a full scan + Python
+        # aggregation against a moving target.
+        if timetable.status == Timetable.Status.GENERATING:
+            return Response({
+                'timetable_id': timetable.id,
+                'name': timetable.name,
+                'status': timetable.status,
+                'totals': {
+                    'entries': 0,
+                    'total_teacher_windows': 0,
+                    'total_long_windows': 0,
+                    'total_class_windows': 0,
+                    'teachers_with_windows': 0,
+                    'teachers_with_long_windows': 0,
+                    'classes_with_windows': 0,
+                    'avg_teacher_windows': 0,
+                    'late_period_lessons': 0,
+                },
+                'teachers': [],
+                'classes': [],
+                'subject_by_period': {},
+                'generating': True,
+            })
         entries = list(
             timetable.entries.select_related(
                 'teacher', 'school_class__grade', 'subject', 'time_slot',

@@ -18,6 +18,7 @@ import AdminUsersPage from './pages/Admin/Users';
 import AdminAuditPage from './pages/Admin/Audit';
 import ManagePage from './pages/Manage';
 import AiAssistant, { AiAssistantProvider } from './components/AiAssistant';
+import { BuildProgressProvider, BuildProgressBanner } from './components/BuildProgress';
 import { getMe } from './api/client';
 
 const cacheRtl = createCache({
@@ -498,26 +499,29 @@ function App() {
         <BrowserRouter>
           {user ? (
             <AiAssistantProvider>
-              <Layout user={user} onLogout={() => setUser(null)}>
-                <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/data" element={<DataEntry />} />
-                <Route path="/import" element={<ImportPage />} />
-                <Route path="/constraints" element={<ConstraintsPage />} />
-                <Route path="/timetable" element={<TimetablePage />} />
-                <Route path="/manage" element={<ManagePage />} />
-                <Route
-                  path="/admin/users"
-                  element={isSuperAdmin ? <AdminUsersPage /> : <Navigate to="/" replace />}
-                />
-                <Route
-                  path="/admin/audit"
-                  element={isSuperAdmin ? <AdminAuditPage /> : <Navigate to="/" replace />}
-                />
-                <Route path="*" element={<Navigate to="/" />} />
-              </Routes>
-              <AiAssistant />
-            </Layout>
+              <BuildProgressProvider>
+                <Layout user={user} onLogout={() => setUser(null)}>
+                  <BuildProgressBanner />
+                  <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/data" element={<DataEntry />} />
+                  <Route path="/import" element={<ImportPage />} />
+                  <Route path="/constraints" element={<ConstraintsPage />} />
+                  <Route path="/timetable" element={<TimetablePage />} />
+                  <Route path="/manage" element={<ManagePage />} />
+                  <Route
+                    path="/admin/users"
+                    element={isSuperAdmin ? <AdminUsersPage /> : <Navigate to="/" replace />}
+                  />
+                  <Route
+                    path="/admin/audit"
+                    element={isSuperAdmin ? <AdminAuditPage /> : <Navigate to="/" replace />}
+                  />
+                  <Route path="*" element={<Navigate to="/" />} />
+                </Routes>
+                <AiAssistant />
+              </Layout>
+              </BuildProgressProvider>
             </AiAssistantProvider>
           ) : (
             <Routes>

@@ -68,31 +68,42 @@ export default function Dashboard() {
   const ChevronEnd = isRtl ? ArrowBackIcon : ArrowForwardIcon;
 
   useEffect(() => {
-    Promise.all([
-      getTeachers().catch(() => ({ data: { count: 0 } })),
-      getSubjects().catch(() => ({ data: { count: 0 } })),
-      getClasses().catch(() => ({ data: { count: 0 } })),
-      getAssignments().catch(() => ({ data: { count: 0 } })),
-      getTimetables().catch(() => ({ data: { results: [] } })),
-    ]).then(([teachers, subjects, classes, assignments, tt]) => {
-      setStats({
-        teachers: teachers.data.count ?? teachers.data.results?.length ?? 0,
-        subjects: subjects.data.count ?? subjects.data.results?.length ?? 0,
-        classes: classes.data.count ?? classes.data.results?.length ?? 0,
-        assignments: assignments.data.count ?? assignments.data.results?.length ?? 0,
-      });
-      setTeachersList(teachers.data.results ?? []);
-      setClassesList(classes.data.results ?? []);
-      const list = tt.data.results ?? [];
-      setTimetables(list);
-      // Latest completed timetable → fetch its quality for the KPI bar.
-      const latest = list.find((x: any) => x.status === 'completed');
-      if (latest) {
-        getTimetableQuality(latest.id)
-          .then((r) => setLatestQuality(r.data))
-          .catch(() => setLatestQuality(null));
-      }
-    });
+    // Each fetch updates its own slice; previously they were Promise.all'd
+    // with `.catch(() => ({ data: { count: 0 } }))`, which meant a single
+    // transient timeout (e.g. during a heavy solver write) reset every counter
+    // to zero. With WAL mode this is rare, but keeping the previous value on
+    // failure means the dashboard never lies about the data we already know.
+    const SENTINEL = -1;
+    const setCount = (key: keyof typeof stats, n: number) => {
+      if (n < 0) return; // failure — leave the stale value alone
+      setStats((s) => ({ ...s, [key]: n }));
+    };
+    getTeachers().then((r) => {
+      setCount('teachers', r.data.count ?? r.data.results?.length ?? 0);
+      setTeachersList(r.data.results ?? []);
+    }).catch(() => setCount('teachers', SENTINEL));
+    getSubjects()
+      .then((r) => setCount('subjects', r.data.count ?? r.data.results?.length ?? 0))
+      .catch(() => setCount('subjects', SENTINEL));
+    getClasses().then((r) => {
+      setCount('classes', r.data.count ?? r.data.results?.length ?? 0);
+      setClassesList(r.data.results ?? []);
+    }).catch(() => setCount('classes', SENTINEL));
+    getAssignments()
+      .then((r) => setCount('assignments', r.data.count ?? r.data.results?.length ?? 0))
+      .catch(() => setCount('assignments', SENTINEL));
+    getTimetables()
+      .then((r) => {
+        const list = r.data.results ?? [];
+        setTimetables(list);
+        const latest = list.find((x: any) => x.status === 'completed');
+        if (latest) {
+          getTimetableQuality(latest.id)
+            .then((r2) => setLatestQuality(r2.data))
+            .catch(() => setLatestQuality(null));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const statCards: { label: string; value: number; icon: ReactElement; tone: StatTone }[] = [

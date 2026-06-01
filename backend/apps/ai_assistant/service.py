@@ -59,6 +59,23 @@ def _content_blocks_to_dict(blocks) -> List[Dict[str, Any]]:
     return out
 
 
+def _proposal_signature(name: str, tool_input: Dict[str, Any]) -> tuple[str, str]:
+    """Stable key that treats order-independent inputs as the same proposal.
+
+    The main offender is swap_entries, where the model occasionally proposes
+    (a, b) then "double-checks" with (b, a) — semantically identical but
+    formerly emitted as two separate confirmation cards. Sorted JSON of any
+    *_id_a/_id_b pair captures that without false positives across other
+    tools."""
+    inp = dict(tool_input or {})
+    # Canonicalize swap-like inputs by sorting the two ids.
+    for key_a, key_b in (('entry_id_a', 'entry_id_b'),):
+        if key_a in inp and key_b in inp:
+            pair = tuple(sorted([inp[key_a], inp[key_b]]))
+            inp[key_a], inp[key_b] = pair
+    return name, json.dumps(inp, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def _render_preview(template: str, input: Dict[str, Any]) -> str:
     """Tiny {input.foo} interpolator. Falls back to a generic preview if the
     tool didn't define a template."""
@@ -132,6 +149,11 @@ def chat_stream(
         # Bucket: needs_confirmation goes to the FE; the rest we run inline.
         proposals = []
         tool_results: List[Dict[str, Any]] = []
+        # Track the canonical (tool, input) signature of every proposal we've
+        # already emitted on this round so the model can't trigger a duplicate
+        # confirmation card by re-issuing the same swap with the same ids —
+        # used to surface as two sequential dialogs for a single intent.
+        seen_signatures: set[tuple[str, str]] = set()
         for tu in tool_uses:
             tool = get_tool(tu.name)
             if tool is None:
@@ -143,6 +165,41 @@ def chat_stream(
                 })
                 continue
             if tool.requires_confirmation:
+                # For swaps, order-independence of the two ids matters — treat
+                # swap(a, b) and swap(b, a) as the same proposal.
+                signature = _proposal_signature(tu.name, tu.input)
+                if signature in seen_signatures:
+                    # Synthesize a tool_result so the model sees "this was
+                    # already proposed" and stops re-issuing. The FE never
+                    # sees a duplicate card.
+                    tool_results.append({
+                        'type': 'tool_result',
+                        'tool_use_id': tu.id,
+                        'is_error': False,
+                        'content': json.dumps({
+                            'already_proposed': True,
+                            'note': 'This action was already proposed this turn — the user is reviewing it.',
+                        }),
+                    })
+                    continue
+                # Validate the inputs upfront where the tool defines a check —
+                # surfacing a bad-id error to the model BEFORE we show a card
+                # avoids the "user confirms doomed dialog, model retries, shows
+                # second card" double-confirmation pattern (P2.5).
+                if tool.pre_proposal_check is not None:
+                    try:
+                        check = tool.pre_proposal_check(tu.input, ctx)
+                    except Exception as exc:
+                        check = {'error': str(exc)}
+                    if isinstance(check, dict) and check.get('error'):
+                        tool_results.append({
+                            'type': 'tool_result',
+                            'tool_use_id': tu.id,
+                            'is_error': True,
+                            'content': json.dumps(check, ensure_ascii=False, default=str),
+                        })
+                        continue
+                seen_signatures.add(signature)
                 proposals.append({
                     'id': tu.id,
                     'name': tu.name,
