@@ -61,7 +61,7 @@ register_tool(Tool(
         },
     },
     handler=_list_teacher_tags,
-    modules=['timetable', 'constraints', 'data'],
+    modules=['timetable', 'constraints', 'data', 'global'],
 ))
 
 
@@ -107,7 +107,7 @@ register_tool(Tool(
         },
     },
     handler=_create_teacher_tag,
-    modules=['timetable', 'constraints', 'data'],
+    modules=['timetable', 'constraints', 'data', 'global'],
     requires_confirmation=True,
     preview_template='יצירת תגית מורים חדשה: {input.name}',
 ))
@@ -168,7 +168,7 @@ register_tool(Tool(
         },
     },
     handler=_assign_teachers_to_tag,
-    modules=['timetable', 'constraints', 'data'],
+    modules=['timetable', 'constraints', 'data', 'global'],
     requires_confirmation=True,
     preview_template='עדכון חברות בתגית #{input.tag_id} — מורים: {input.teacher_ids}',
 ))
@@ -308,7 +308,7 @@ register_tool(Tool(
         },
     },
     handler=_create_group_meeting_constraint,
-    modules=['timetable', 'constraints'],
+    modules=['timetable', 'constraints', 'global'],
     requires_confirmation=True,
     preview_template='יצירת אילוץ פגישה לתגית #{input.tag_id} ב-{input.slots}',
 ))

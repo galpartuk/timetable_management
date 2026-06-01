@@ -39,6 +39,12 @@ class Tool:
     # Human-readable preview template shown on the FE confirmation card.
     # Use {input.foo} placeholders. Falls back to a generic preview.
     preview_template: str = ''
+    # Optional pre-proposal validator. Runs at confirmation-card time, BEFORE
+    # the user sees a dialog. If it returns a dict (typically {'error': ...}),
+    # the proposal is suppressed and that dict is fed back to the model as a
+    # tool_result so it can self-correct without surfacing a doomed dialog to
+    # the user. None means "no validation; proceed straight to the card".
+    pre_proposal_check: Callable[[Dict[str, Any], 'ToolContext'], Any] | None = None
 
     def to_anthropic(self) -> Dict[str, Any]:
         return {

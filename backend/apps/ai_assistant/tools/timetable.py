@@ -22,14 +22,34 @@ def _default_school_id(ctx: ToolContext) -> int | None:
     return ctx.view_state.get('school_id') or 1
 
 
+def _resolve_timetable_id(input: Dict[str, Any], ctx: ToolContext) -> int | None:
+    """The user can talk to the AI from any page now, not just /timetable.
+    Honor explicit input first, then the FE-supplied view_state, finally
+    fall back to the most recently updated completed/generating timetable
+    so questions like 'find conflicts' work from the dashboard too."""
+    tid = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    if tid:
+        return int(tid)
+    school_id = _default_school_id(ctx)
+    latest = (
+        Timetable.objects
+        .filter(school_id=school_id)
+        .exclude(status=Timetable.Status.DRAFT)
+        .order_by('-updated_at')
+        .values_list('id', flat=True)
+        .first()
+    )
+    return latest
+
+
 # ── read-only ─────────────────────────────────────────────────────────────
 
 def _find_conflicts(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     """Detect double-bookings: same teacher in two places, same class in two
     places, same room in two places — within a single time_slot."""
-    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    timetable_id = _resolve_timetable_id(input, ctx)
     if not timetable_id:
-        return {'error': 'timetable_id is required (or set in view_state)'}
+        return {'error': 'no timetable found — create one first or pass timetable_id'}
 
     entries = list(
         TimetableEntry.objects
@@ -123,14 +143,14 @@ register_tool(Tool(
         },
     },
     handler=_find_conflicts,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
 def _summarize_timetable(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
-    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    timetable_id = _resolve_timetable_id(input, ctx)
     if not timetable_id:
-        return {'error': 'timetable_id is required'}
+        return {'error': 'no timetable found — create one first or pass timetable_id'}
     tt = Timetable.objects.filter(id=timetable_id).first()
     if not tt:
         return {'error': f'timetable {timetable_id} not found'}
@@ -158,7 +178,7 @@ register_tool(Tool(
         },
     },
     handler=_summarize_timetable,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
@@ -216,6 +236,20 @@ def _move_entry(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     }
 
 
+def _check_move_entry(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any] | None:
+    """Pre-proposal validation: bail out before the user sees a confirmation
+    card if either id is missing/unknown — the model can pick again."""
+    entry_id = input.get('entry_id')
+    target = input.get('target_time_slot_id')
+    if not entry_id or not target:
+        return {'error': 'entry_id and target_time_slot_id are required'}
+    if not TimetableEntry.objects.filter(id=entry_id).exists():
+        return {'error': f'entry {entry_id} not found'}
+    if not TimeSlot.objects.filter(id=target).exists():
+        return {'error': f'time slot {target} not found'}
+    return None
+
+
 register_tool(Tool(
     name='move_entry',
     description=(
@@ -231,9 +265,10 @@ register_tool(Tool(
         'required': ['entry_id', 'target_time_slot_id'],
     },
     handler=_move_entry,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
     requires_confirmation=True,
     preview_template='להעביר שיעור #{input.entry_id} למשבצת #{input.target_time_slot_id}',
+    pre_proposal_check=_check_move_entry,
 ))
 
 
@@ -266,7 +301,7 @@ register_tool(Tool(
         'properties': {'school_id': {'type': 'integer'}},
     },
     handler=_list_classes,
-    modules=['timetable', 'data'],
+    modules=['timetable', 'data', 'global'],
 ))
 
 
@@ -295,7 +330,7 @@ register_tool(Tool(
         'properties': {'school_id': {'type': 'integer'}},
     },
     handler=_list_teachers,
-    modules=['timetable', 'data'],
+    modules=['timetable', 'data', 'global'],
 ))
 
 
@@ -321,7 +356,7 @@ register_tool(Tool(
         'properties': {'school_id': {'type': 'integer'}},
     },
     handler=_list_subjects,
-    modules=['timetable', 'data'],
+    modules=['timetable', 'data', 'global'],
 ))
 
 
@@ -352,7 +387,7 @@ register_tool(Tool(
         'properties': {'school_id': {'type': 'integer'}},
     },
     handler=_list_time_slots,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
@@ -399,7 +434,7 @@ register_tool(Tool(
         },
     },
     handler=_list_assignments,
-    modules=['timetable', 'data'],
+    modules=['timetable', 'data', 'global'],
 ))
 
 
@@ -458,9 +493,9 @@ def _run_generator(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     ``status`` is the source of truth and flips from ``generating``
     to ``completed`` / ``failed`` when the solver returns.
     """
-    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    timetable_id = _resolve_timetable_id(input, ctx)
     if not timetable_id:
-        return {'error': 'timetable_id is required'}
+        return {'error': 'no timetable found — create one first with create_timetable'}
 
     tt = Timetable.objects.filter(id=timetable_id).first()
     if not tt:
@@ -516,7 +551,7 @@ register_tool(Tool(
         },
     },
     handler=_run_generator,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
     requires_confirmation=True,
     preview_template='להתחיל בנייה אוטומטית של מערכת #{input.timetable_id} (תחליף שיעורים קיימים)',
 ))
@@ -603,7 +638,7 @@ register_tool(Tool(
         'required': ['entry_id'],
     },
     handler=_explain_lesson,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
@@ -611,9 +646,9 @@ def _suggest_improvements(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, 
     """Identify the top-3 highest-impact swaps that would reduce teacher
     windows. Heuristic: find teachers with windows, look for moves that
     fill the gap or move a window-creating lesson to a better slot."""
-    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    timetable_id = _resolve_timetable_id(input, ctx)
     if not timetable_id:
-        return {'error': 'timetable_id required'}
+        return {'error': 'no timetable found — create one first or pass timetable_id'}
     entries = list(
         TimetableEntry.objects.filter(timetable_id=timetable_id)
         .select_related('teacher', 'school_class__grade', 'subject', 'time_slot')
@@ -678,7 +713,7 @@ register_tool(Tool(
         },
     },
     handler=_suggest_improvements,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
@@ -692,9 +727,9 @@ def _get_schedule(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     timetable — including each lesson's entry_id and time_slot_id, plus the
     slots that entity has free. This is what lets the model pick *what* to
     move and *where* it may legally land."""
-    timetable_id = input.get('timetable_id') or ctx.view_state.get('timetable_id')
+    timetable_id = _resolve_timetable_id(input, ctx)
     if not timetable_id:
-        return {'error': 'timetable_id is required (or open a timetable in the UI)'}
+        return {'error': 'no timetable found — create one first or pass timetable_id'}
     tt = Timetable.objects.filter(id=timetable_id).first()
     if not tt:
         return {'error': f'timetable {timetable_id} not found'}
@@ -772,7 +807,7 @@ register_tool(Tool(
         },
     },
     handler=_get_schedule,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
 ))
 
 
@@ -843,6 +878,26 @@ def _swap_entries(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     }
 
 
+def _check_swap_entries(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any] | None:
+    """Pre-proposal validation: resolve both ids before the confirmation card
+    is shown. If anything is wrong, surface the error to the model so it can
+    fix the inputs instead of leading the user through a doomed dialog."""
+    a_id = input.get('entry_id_a')
+    b_id = input.get('entry_id_b')
+    if not a_id or not b_id:
+        return {'error': 'entry_id_a and entry_id_b are required'}
+    if a_id == b_id:
+        return {'error': 'the two entries must be different'}
+    pair = TimetableEntry.objects.filter(id__in=[a_id, b_id]).values_list('id', 'timetable_id')
+    found = list(pair)
+    if len(found) != 2:
+        missing = {a_id, b_id} - {x[0] for x in found}
+        return {'error': f'entry ids not found: {sorted(missing)}'}
+    if found[0][1] != found[1][1]:
+        return {'error': 'the two entries belong to different timetables'}
+    return None
+
+
 register_tool(Tool(
     name='swap_entries',
     description=(
@@ -861,7 +916,8 @@ register_tool(Tool(
         'required': ['entry_id_a', 'entry_id_b'],
     },
     handler=_swap_entries,
-    modules=['timetable'],
+    modules=['timetable', 'global'],
     requires_confirmation=True,
     preview_template='להחליף בין שיעור #{input.entry_id_a} לשיעור #{input.entry_id_b}',
+    pre_proposal_check=_check_swap_entries,
 ))

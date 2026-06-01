@@ -78,6 +78,18 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # When the solver writes a few thousand TimetableEntry rows in
+        # bulk_create, default SQLite (journal_mode=DELETE) holds an exclusive
+        # write-lock for the whole transaction. Every concurrent HTTP request
+        # (detail fetch, quality, dashboard counts) blocks on it — the user
+        # sees a 2-minute blank page on F5 during a build. The connection-level
+        # PRAGMAs are applied in apps/scheduling/apps.py on connection_created
+        # so they're set once per connection; OPTIONS.timeout here ensures any
+        # remaining contention waits (up to 30s) instead of failing fast with
+        # OperationalError.
+        'OPTIONS': {
+            'timeout': 30,
+        },
     }
 }
 

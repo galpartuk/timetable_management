@@ -2,16 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAiAssistantContext } from '../../components/AiAssistant';
+import { useBuildProgress } from '../../components/BuildProgress';
 import {
   Box, Typography, Card, CardContent, Button, ToggleButtonGroup,
   ToggleButton, MenuItem, TextField, CircularProgress, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, Stack, LinearProgress,
-  Tooltip,
+  Tooltip, Popover, Divider,
 } from '@mui/material';
 import {
   CalendarMonth, Add, AutoAwesome, DeleteOutlined, Print,
   UploadFile, Download, InsertDriveFile, WarningAmber,
+  Lock, LockOpen, SwapHoriz, OpenWith, Chat,
 } from '@mui/icons-material';
+import { useAiAssistant } from '../../components/AiAssistant';
 import {
   getTimetables, getTimetable, createTimetable, generateTimetable,
   getTimetableByClass, getTimetableByTeacher,
@@ -34,15 +37,12 @@ const STATUS_CHIP: Record<string, 'default' | 'primary' | 'success' | 'error' | 
   published: 'warning',
 };
 
-interface BuildProgress {
-  startedAt: number;        // client ms when polling began (fallback anchor)
-  startedAtServer?: number; // server epoch seconds the build actually began
-  phase?: string;           // starting | loading | building | solving | writing
-  solutions?: number;
-  objective?: number;
-  maxTime?: number;         // solver time budget in seconds
-}
-
+// Mirrors the phase markers solver/engine.py emits via _set_progress. The
+// loading/building phases typically complete in <1s, so the polling window
+// usually only catches 'starting' → 'solving' → terminal. 'writing' shows up
+// when the solver finds a feasible solution and bulk_creates the entries.
+// Keep all five — dropping the rarely-seen labels would mask a regression
+// (e.g. if 'writing' takes much longer than expected).
 const PHASE_LABELS: Record<string, { he: string; en: string }> = {
   starting: { he: 'מתחיל…', en: 'Starting…' },
   loading:  { he: 'טוען נתונים…', en: 'Loading data…' },
@@ -67,20 +67,22 @@ export default function TimetablePage() {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<number | ''>('');
   const [entries, setEntries] = useState<any[]>([]);
-  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [quality, setQuality] = useState<TimetableQuality | null>(null);
   const [dataSource, setDataSource] = useState<DataSource | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [build, setBuild] = useState<BuildProgress | null>(null);
   const [nowTs, setNowTs] = useState(Date.now());
   const [buildLog, setBuildLog] = useState('');
   const [showLog, setShowLog] = useState(false);
   const [buildFailed, setBuildFailed] = useState(false);
-  const pollingRef = useRef(false);
   const isRtl = i18n.language === 'he';
+  const { build, outcome, trackBuild, adoptIfGenerating } = useBuildProgress();
+  // Show the inline progress card only when the live build belongs to the
+  // currently-selected timetable; the global banner covers the cross-page case.
+  const isBuildingThis = !!build && build.timetableId === selectedTT?.id;
+  const generating = isBuildingThis;
 
   const loadDataSource = () =>
     getCurrentDataSource(SCHOOL_ID).then((r) => setDataSource(r.data)).catch(() => {});
@@ -182,54 +184,6 @@ export default function TimetablePage() {
     return quality.classes.find((c) => c.id === selectedId) || null;
   }, [quality, selectedId, viewMode]);
 
-  // Poll a generating timetable until it finishes, mirroring backend
-  // progress into `build` so the UI can show a live status bar. Guarded by
-  // pollingRef so we never run two pollers for one build.
-  const pollUntilDone = (ttId: number, startedAtMs: number) => {
-    if (pollingRef.current) return;
-    pollingRef.current = true;
-    setGenerating(true);
-    setBuildLog('');
-    setShowLog(false);
-    setBuildFailed(false);
-    setBuild({ startedAt: startedAtMs, phase: 'starting', maxTime: 300 });
-    const giveUpAt = Date.now() + 15 * 60 * 1000; // 15min safety net
-    const ticker = setInterval(async () => {
-      try {
-        const r = await getTimetable(ttId);
-        const p = r.data.progress || {};
-        setBuild((prev) => ({
-          startedAt: prev?.startedAt ?? startedAtMs,
-          startedAtServer: p.started_at ?? prev?.startedAtServer,
-          phase: p.phase ?? prev?.phase,
-          solutions: p.solutions,
-          objective: p.objective,
-          maxTime: p.max_time_seconds ?? prev?.maxTime ?? 300,
-        }));
-        if (r.data.status !== 'generating') {
-          clearInterval(ticker);
-          pollingRef.current = false;
-          setSelectedTT(r.data);
-          getTimetables().then((res) => setTimetables(res.data.results ?? []));
-          if (r.data.status === 'failed') {
-            setBuildFailed(true);
-            setBuildLog((r.data.solver_log || '').trim());
-          }
-          setGenerating(false);
-          setBuild(null);
-        } else if (Date.now() > giveUpAt) {
-          clearInterval(ticker);
-          pollingRef.current = false;
-          setError(isRtl ? 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.' : 'Build exceeded 15 minutes — check the server log.');
-          setGenerating(false);
-          setBuild(null);
-        }
-      } catch {
-        // Network blip — keep polling until the safety net trips.
-      }
-    }, 2000);
-  };
-
   const handleGenerate = async () => {
     // Kick off the background build. The backend returns 202 immediately
     // with the row already flipped to 'generating'; the actual solve
@@ -238,6 +192,9 @@ export default function TimetablePage() {
     // reverse proxy killed long requests.
     if (!selectedTT) return;
     setError('');
+    setBuildLog('');
+    setShowLog(false);
+    setBuildFailed(false);
     try {
       await generateTimetable(selectedTT.id);
     } catch (err: any) {
@@ -250,7 +207,7 @@ export default function TimetablePage() {
         return;
       }
     }
-    pollUntilDone(selectedTT.id, Date.now());
+    trackBuild(selectedTT.id, { timetableName: selectedTT.name });
   };
 
   // Tick a clock every second while a build runs so the elapsed time and
@@ -262,18 +219,33 @@ export default function TimetablePage() {
   }, [generating]);
 
   // If we land on the page while a build is already running (e.g. after a
-  // refresh), start showing progress for it too.
+  // refresh), let the global store adopt it so the banner + this page stay
+  // in sync.
   useEffect(() => {
-    if (selectedTT?.status === 'generating' && !pollingRef.current) {
-      pollUntilDone(selectedTT.id, Date.now());
+    if (selectedTT) adoptIfGenerating(selectedTT);
+  }, [selectedTT?.id, selectedTT?.status, adoptIfGenerating]);
+
+  // When the global store reports a finished build for the timetable shown
+  // here, refresh the list + the selected detail so the grid repopulates.
+  useEffect(() => {
+    if (!outcome) return;
+    if (selectedTT && outcome.timetableId === selectedTT.id) {
+      getTimetable(selectedTT.id).then((r) => setSelectedTT(r.data)).catch(() => {});
+      getTimetables().then((r) => setTimetables(r.data.results ?? [])).catch(() => {});
+      if (outcome.status === 'failed') {
+        setBuildFailed(true);
+        setBuildLog(outcome.log || '');
+      } else {
+        setBuildFailed(false);
+        setBuildLog('');
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTT?.id, selectedTT?.status]);
+  }, [outcome, selectedTT?.id]);
 
   // Show the failure reason whenever a failed timetable is viewed. The list
   // payload omits solver_log, so fetch the detail. Clear it for healthy ones.
   useEffect(() => {
-    if (pollingRef.current) return; // a live build owns this UI
+    if (build) return; // a live build owns this UI
     if (selectedTT?.status === 'failed') {
       getTimetable(selectedTT.id)
         .then((r) => { setBuildFailed(true); setBuildLog((r.data.solver_log || '').trim()); })
@@ -404,11 +376,13 @@ export default function TimetablePage() {
       )}
 
       {/* Live build progress — shown while the solver runs so it never looks
-          stuck. Phase text + an advancing bar + solutions found so far. */}
+          stuck. Phase text + an advancing bar + solutions found so far. The
+          state lives in BuildProgressContext so progress survives sidebar nav
+          and shows in the persistent top banner too. */}
       {generating && build && (() => {
         // Anchor the clock to the server's real build-start time when known,
         // so it stays accurate even if the page was reopened mid-build.
-        const anchorMs = build.startedAtServer ? build.startedAtServer * 1000 : build.startedAt;
+        const anchorMs = build.startedAtServer ? build.startedAtServer * 1000 : build.startedAtClient;
         const elapsed = Math.max(0, Math.floor((nowTs - anchorMs) / 1000));
         const mm = Math.floor(elapsed / 60);
         const elapsedStr = `${mm}:${String(elapsed % 60).padStart(2, '0')}`;
@@ -441,8 +415,8 @@ export default function TimetablePage() {
                       ? `נמצאו ${build.solutions} פתרונות — משפר את האיכות${build.objective != null ? ` (ניקוד: ${Math.round(build.objective)})` : ''}`
                       : `${build.solutions} solutions found — improving${build.objective != null ? ` (score: ${Math.round(build.objective)})` : ''}`)
                   : (isRtl
-                      ? 'הבנייה רצה ברקע — אפשר להמשיך לעבוד, נעדכן כשתסתיים.'
-                      : 'Running in the background — feel free to keep working; we’ll update when it’s done.')}
+                      ? 'הבנייה רצה ברקע — העמוד יתעדכן בסיום. ייתכן ופעולות אחרות יהיו איטיות יותר עד אז.'
+                      : 'Running in the background — this page will update when it finishes. Other pages may be slower until then.')}
               </Typography>
             </CardContent>
           </Card>
@@ -492,11 +466,25 @@ export default function TimetablePage() {
                   </Stack>
                 </Box>
                 <Stack direction="row" spacing={1}>
-                  {dataSource.source?.has_file && (
+                  {dataSource.source?.has_file ? (
                     <Tooltip title={t('timetable.downloadExcel')}>
                       <Button variant="outlined" startIcon={<Download />} onClick={handleDownloadExcel} disabled={uploading}>
                         {t('timetable.download')}
                       </Button>
+                    </Tooltip>
+                  ) : (
+                    // Older imports — done before source_file was stored on
+                    // ImportLog — have no .xlsx to hand back. Make that
+                    // visible instead of silently hiding the button, so the
+                    // user understands a fresh upload is needed for archival.
+                    <Tooltip title={isRtl
+                      ? 'הקובץ המקורי לא נשמר עבור ייבוא זה. ייבוא חדש יישמר.'
+                      : 'Original file was not stored for this import. A fresh upload will be stored.'}>
+                      <span>
+                        <Button variant="outlined" startIcon={<Download />} disabled>
+                          {isRtl ? 'אין קובץ מקור' : 'No source file'}
+                        </Button>
+                      </span>
                     </Tooltip>
                   )}
                   <Button variant="outlined" startIcon={<UploadFile />} onClick={() => fileInputRef.current?.click()} disabled={uploading}>
@@ -783,6 +771,9 @@ function PeriodRow({
   );
 }
 
+const DAY_LABELS_HE: Record<number, string> = { 1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי' };
+const DAY_LABELS_EN: Record<number, string> = { 1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday' };
+
 function Cell({
   entry, viewMode, isWindow, day, period, timetableId, onChange,
 }: {
@@ -794,7 +785,11 @@ function Cell({
   timetableId?: number;
   onChange?: () => void;
 }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const ai = useAiAssistant();
   const [dragOver, setDragOver] = useState(false);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     if (!timetableId || !day || !period) return;
@@ -815,6 +810,9 @@ function Cell({
       alert(err.response?.data?.error || 'הזזה נכשלה');
     }
   };
+
+  const dayName = (d?: number) =>
+    d ? (isRtl ? DAY_LABELS_HE[d] : DAY_LABELS_EN[d]) ?? String(d) : '';
 
   if (!entry) {
     if (isWindow) {
@@ -875,15 +873,24 @@ function Cell({
     } catch { /* swallow */ }
   };
 
+  const askAi = (prompt: string) => {
+    setAnchorEl(null);
+    ai.openWith(prompt);
+  };
+
   return (
+    <>
     <Box
       draggable={canDrag}
       onDragStart={canDrag ? handleDragStart : undefined}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={(e) => setAnchorEl(e.currentTarget as HTMLElement)}
       onDoubleClick={handleDblClick}
-      title={isLocked ? 'נעול — לחיצה כפולה לפתיחה' : 'גרירה להזזה · לחיצה כפולה לנעילה'}
+      title={isLocked
+        ? (isRtl ? 'נעול — לחיצה כפולה לפתיחה · לחיצה לפרטים' : 'Locked — double-click to unlock · click for details')
+        : (isRtl ? 'גרירה להזזה · לחיצה כפולה לנעילה · לחיצה לפרטים' : 'Drag to move · double-click to lock · click for details')}
       sx={{
         minHeight: 76,
         borderRadius: 2,
@@ -896,7 +903,7 @@ function Cell({
           : `1px solid ${color}30`,
         overflow: 'hidden',
         padding: '10px 12px',
-        cursor: canDrag ? 'grab' : 'default',
+        cursor: canDrag ? 'grab' : 'pointer',
         transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms',
         '&:hover': {
           transform: canDrag ? 'translateY(-1px)' : 'none',
@@ -904,7 +911,7 @@ function Cell({
           background: `${color}18`,
         },
         '&:active': {
-          cursor: canDrag ? 'grabbing' : 'default',
+          cursor: canDrag ? 'grabbing' : 'pointer',
         },
       }}
     >
@@ -931,6 +938,83 @@ function Cell({
         {subText}
       </Typography>
     </Box>
+
+    {/* Lesson-detail popover. Click the cell to inspect; lock/unlock inline;
+        hand off to the AI for moves and swaps so the user doesn't have to
+        type the entry id by hand. */}
+    <Popover
+      open={!!anchorEl}
+      anchorEl={anchorEl}
+      onClose={() => setAnchorEl(null)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: isRtl ? 'right' : 'left' }}
+      transformOrigin={{ vertical: 'top', horizontal: isRtl ? 'right' : 'left' }}
+      slotProps={{ paper: { sx: { p: 1.5, minWidth: 260, borderRadius: 2 } } }}
+    >
+      <Stack spacing={0.5}>
+        <Typography sx={{ fontSize: 14, fontWeight: 700, color }}>
+          {entry.subject_name}
+        </Typography>
+        <Typography variant="caption" sx={{ color: 'grey.700' }}>
+          {isRtl ? 'מורה' : 'Teacher'}: {entry.teacher_name}
+        </Typography>
+        <Typography variant="caption" sx={{ color: 'grey.700' }}>
+          {isRtl ? 'כיתה' : 'Class'}: {entry.class_name}
+        </Typography>
+        <Typography variant="caption" sx={{ color: 'grey.700' }}>
+          {isRtl ? 'יום ושעה' : 'Day & period'}: {dayName(entry.day ?? day)} · {isRtl ? 'שיעור' : 'Period'} {entry.period ?? period}
+        </Typography>
+        <Typography variant="caption" sx={{ color: 'grey.500' }}>
+          {isRtl ? 'מזהה' : 'ID'}: #{entry.id}
+        </Typography>
+      </Stack>
+      <Divider sx={{ my: 1 }} />
+      <Stack spacing={0.5}>
+        {timetableId && (
+          <Button
+            size="small"
+            startIcon={isLocked ? <LockOpen fontSize="small" /> : <Lock fontSize="small" />}
+            onClick={async () => {
+              await handleDblClick();
+              setAnchorEl(null);
+            }}
+            sx={{ justifyContent: 'flex-start' }}
+          >
+            {isLocked ? (isRtl ? 'בטל נעילה' : 'Unlock') : (isRtl ? 'נעל שיעור זה' : 'Lock this lesson')}
+          </Button>
+        )}
+        <Button
+          size="small"
+          startIcon={<OpenWith fontSize="small" />}
+          onClick={() => askAi(isRtl
+            ? `העבר את שיעור ${entry.subject_name} של ${entry.class_name} (entry_id=${entry.id}) למשבצת אחרת. הראה לי תחילה אילו משבצות פנויות והצע יעד.`
+            : `Move the ${entry.subject_name} lesson for ${entry.class_name} (entry_id=${entry.id}) to a different slot. Show me free slots first and propose a target.`)}
+          sx={{ justifyContent: 'flex-start' }}
+        >
+          {isRtl ? 'בקש מה-AI להזיז' : 'Ask AI to move'}
+        </Button>
+        <Button
+          size="small"
+          startIcon={<SwapHoriz fontSize="small" />}
+          onClick={() => askAi(isRtl
+            ? `החלף את שיעור ${entry.subject_name} של ${entry.class_name} (entry_id=${entry.id}) עם שיעור אחר. הראה לי אופציות טובות להחלפה.`
+            : `Swap the ${entry.subject_name} lesson for ${entry.class_name} (entry_id=${entry.id}) with another lesson. Show me good swap candidates.`)}
+          sx={{ justifyContent: 'flex-start' }}
+        >
+          {isRtl ? 'בקש מה-AI להחליף' : 'Ask AI to swap'}
+        </Button>
+        <Button
+          size="small"
+          startIcon={<Chat fontSize="small" />}
+          onClick={() => askAi(isRtl
+            ? `הסבר למה שיעור ${entry.subject_name} של ${entry.class_name} (entry_id=${entry.id}) משובץ דווקא כאן.`
+            : `Explain why the ${entry.subject_name} lesson for ${entry.class_name} (entry_id=${entry.id}) is scheduled here.`)}
+          sx={{ justifyContent: 'flex-start' }}
+        >
+          {isRtl ? 'למה זה כאן?' : 'Why is this here?'}
+        </Button>
+      </Stack>
+    </Popover>
+    </>
   );
 }
 

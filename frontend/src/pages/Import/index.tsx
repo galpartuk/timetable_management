@@ -12,8 +12,9 @@ import {
   Description as FileIcon,
   Close as CloseIcon,
   Refresh as RefreshIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
-import { uploadExcel } from '../../api/client';
+import { uploadExcel, downloadImportTemplate } from '../../api/client';
 
 export default function ImportPage() {
   const { t, i18n } = useTranslation();
@@ -70,15 +71,36 @@ export default function ImportPage() {
 
   return (
     <Box>
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h2" sx={{ mb: 0.5 }}>
-          {t('import.title')}
-        </Typography>
-        <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
-          {isRtl
-            ? 'העלו קובץ אקסל המכיל מקצועות, מורים ושיבוצים כדי לייבא את הנתונים בלחיצה אחת.'
-            : 'Upload an Excel file with subjects, teachers, and assignments to import everything in one click.'}
-        </Typography>
+      <Box sx={{ mb: 4, display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 2, alignItems: { md: 'flex-end' }, justifyContent: 'space-between' }}>
+        <Box>
+          <Typography variant="h2" sx={{ mb: 0.5 }}>
+            {t('import.title')}
+          </Typography>
+          <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
+            {isRtl
+              ? 'העלו קובץ אקסל המכיל מקצועות, מורים ושיבוצים כדי לייבא את הנתונים בלחיצה אחת.'
+              : 'Upload an Excel file with subjects, teachers, and assignments to import everything in one click.'}
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          startIcon={<DownloadIcon />}
+          onClick={async () => {
+            try {
+              const res = await downloadImportTemplate();
+              const url = URL.createObjectURL(res.data);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'timetable_template.xlsx';
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch {
+              setError(isRtl ? 'הורדת התבנית נכשלה' : 'Template download failed');
+            }
+          }}
+        >
+          {isRtl ? 'הורדת תבנית ריקה' : 'Download blank template'}
+        </Button>
       </Box>
 
       <Card sx={{ mb: 3 }}>

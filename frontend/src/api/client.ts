@@ -344,6 +344,9 @@ export const getCurrentDataSource = (schoolId: number) =>
 export const downloadImportFile = (logId: number) =>
   api.get(`/import/logs/${logId}/download/`, { responseType: 'blob' });
 
+export const downloadImportTemplate = () =>
+  api.get('/import/template/', { responseType: 'blob' });
+
 export interface GapAnalysis {
   school_id: number;
   classes_missing_homeroom_count: number;

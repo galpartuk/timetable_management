@@ -10,6 +10,7 @@ import { MessageBubble, StreamingBubble } from './Message';
 import { ToolPreview } from './ToolPreview';
 import type { ModuleContext } from './types';
 import { useAiAssistantChat } from './useAiAssistantChat';
+import { useAiAssistant } from './AiAssistantContext';
 
 interface Props {
   ctx: ModuleContext;
@@ -18,8 +19,17 @@ interface Props {
 /** Message list + composer + quick actions, all in one panel. */
 export function ChatPanel({ ctx }: Props) {
   const { state, sendMessage, resolveProposal } = useAiAssistantChat();
+  const { consumePrefill } = useAiAssistant();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Pull a one-shot prefill set via openWith(text) — used by handoffs like
+  // the lesson popover so the user lands in the panel with a ready prompt.
+  useEffect(() => {
+    const text = consumePrefill();
+    if (text) setDraft(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-scroll to the latest message / token.
   useEffect(() => {

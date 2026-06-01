@@ -343,6 +343,55 @@ def download_import_file(request, log_id):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def import_template(request):
+    """Generate and stream back a blank Excel template with the columns the
+    parser expects, plus two example rows. Built at request time (rather than
+    shipped as a static file) so changes to HEADER_KEYS don't silently drift
+    out of sync with the template a user downloads."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'מתמטיקה'  # one example subject sheet
+    headers = [
+        'כיתה', 'סוג כיתה', 'שם המורה המלמד', 'שעות הוראה',
+        'שעות גמול בגרות', 'סמל שאלון בגרות', 'הערות',
+    ]
+    ws.append(headers)
+    # Header styling — visually distinct so the user knows not to delete the row.
+    bold = Font(bold=True)
+    fill = PatternFill(fill_type='solid', fgColor='E0E7FF')
+    for col_idx in range(1, len(headers) + 1):
+        c = ws.cell(row=1, column=col_idx)
+        c.font = bold
+        c.fill = fill
+        c.alignment = Alignment(horizontal='center')
+    # Example rows so the user sees the expected shape (RTL Hebrew).
+    ws.append(['ז1', '', 'דנה כהן', 5, '', '', 'דוגמה — מחקו את השורות לדוגמה לפני ייבוא'])
+    ws.append(['ז2', '', 'דנה כהן', 5, '', '', ''])
+    ws.append(['יא 1,2,5', '', '', '', '', '', 'שורת הקבצה — בשורות הבאות פירוט יח"ל/מורה'])
+    ws.append(['', '5 יח"ל', 'משה לוי', 8, 2, '035001', ''])
+    ws.append(['', '4 יח"ל', 'רינה דוד', 6, 1, '035001', ''])
+    # Reasonable column widths so Hebrew text is readable.
+    widths = [16, 14, 22, 12, 14, 14, 36]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    ws.sheet_view.rightToLeft = True
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = 'attachment; filename="timetable_template.xlsx"'
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def gap_analysis(request):
     """Snapshot of "what's missing for a feasible timetable".
 
