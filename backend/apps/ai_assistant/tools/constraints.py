@@ -43,6 +43,7 @@ def _default_school_id(ctx: ToolContext) -> int | None:
 _SUPPORTED = {
     'teacher_availability', 'max_daily_hours_class', 'max_daily_hours_teacher',
     'consecutive_hours', 'lunch_break', 'consecutive_pair', 'no_last_period',
+    'subject_day_blackout',
 }
 
 _TYPE_LABEL_HE = {
@@ -53,6 +54,7 @@ _TYPE_LABEL_HE = {
     'lunch_break': 'הפסקת אוכל',
     'consecutive_pair': 'שיעורים כפולים רצופים',
     'no_last_period': 'לא בשיעור אחרון',
+    'subject_day_blackout': 'חסימת מקצוע ביום',
 }
 
 
@@ -208,6 +210,14 @@ def _create_constraint(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any
         periods = _int_list(input.get('periods'))
         if periods:
             params['periods'] = periods
+    elif ctype == 'subject_day_blackout':
+        if not subject:
+            return {'error': 'subject_id is required for subject_day_blackout'}
+        raw_days = input.get('days') or []
+        days = [d for d in (_coerce_day(x) for x in raw_days) if d is not None]
+        if not days:
+            return {'error': 'days (list of weekday names or 1..5) is required and must be non-empty'}
+        params['days'] = sorted(set(days))
 
     name = (input.get('name') or '').strip() or _TYPE_LABEL_HE.get(ctype, ctype)
     constraint = Constraint.objects.create(
@@ -256,6 +266,10 @@ register_tool(Tool(
         'class_id + subject_id; optional min_pairs.\n'
         '- no_last_period: forbid the last period(s) — optional teacher_id/'
         'class_id/subject_id (omit all = everyone) and optional periods.\n'
+        '- subject_day_blackout: forbid a subject on specific days for a class '
+        '(or all classes) — needs subject_id + days [1..5]. Use this for '
+        '"no English on Tuesdays for ז1"; for a whole grade fan out one '
+        'constraint per class.\n'
         'priority hard = must respect, soft = minimize violations (default hard). '
         'Resolve names to IDs with list_teachers/list_classes/list_subjects first. '
         'After creating, tell the user to re-run the generator.'
@@ -293,7 +307,7 @@ register_tool(Tool(
             },
             'days': {
                 'type': 'array',
-                'description': 'For lunch_break: which days (default all). 1..5 or names.',
+                'description': 'For lunch_break (which days to apply, default all) and subject_day_blackout (which days to forbid). 1..5 or names.',
             },
             'max_hours': {'type': 'integer', 'description': 'For max_daily_hours_*.'},
             'max_per_day': {'type': 'integer', 'description': 'For consecutive_hours.'},

@@ -334,6 +334,44 @@ def teacher_availability_soft(ctx: SolverContext, c, soft_weight: int) -> list:
     return penalties
 
 
+@register('subject_day_blackout')
+def subject_day_blackout(ctx: SolverContext, c):
+    """Forbid a subject from being scheduled on specific days for a class.
+
+    parameters: {"days": [1, 3]}  (Sun=1..Thu=5)
+    School class filter from the Constraint FK (null = all classes).
+    Subject FK is required — without it the constraint is a no-op.
+
+    Use case: "no English on Tuesdays for grade 7" — fan out one constraint
+    per class in the grade (caller's job). consecutive_hours can't model
+    this because it applies the cap to every day uniformly.
+    """
+    if not c.subject_id:
+        return
+    raw_days = c.parameters.get('days', []) or []
+    target_days = [d for d in raw_days if isinstance(d, int) and 1 <= d <= 7]
+    if not target_days:
+        return
+
+    # Slot indices that fall on a forbidden day.
+    bad_slots = set()
+    for ts in ctx.time_slots:
+        if ts.day in target_days:
+            bad_slots.add(ctx.ts_index[ts.id])
+
+    target_class = c.school_class_id
+    keys = list(ctx.lessons_by_class_subject.keys())
+    if target_class:
+        keys = [k for k in keys if k[0] == target_class and k[1] == c.subject_id]
+    else:
+        keys = [k for k in keys if k[1] == c.subject_id]
+
+    for key in keys:
+        for lesson in ctx.lessons_by_class_subject[key]:
+            for s in bad_slots:
+                ctx.model.add(lesson.var != s)
+
+
 @register('no_last_period')
 def no_last_period(ctx: SolverContext, c):
     """Forbid lessons in the school's last period(s).

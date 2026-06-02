@@ -15,6 +15,11 @@ class Constraint(models.Model):
         # Block every teacher in `tag` at the (day, period) slots listed
         # in parameters['slots']. Use for staff/team meetings.
         GROUP_BLOCKED_SLOT = 'group_blocked_slot', 'חסימת קבוצת מורים בשיעור'
+        # Block a subject from being scheduled on specific days for a class
+        # (or all classes). parameters = {'days': [int]}. Use for "no English
+        # on Tuesdays for ז1". consecutive_hours can't express this — it
+        # applies to every day uniformly and doesn't allow max_per_day=0.
+        SUBJECT_DAY_BLACKOUT = 'subject_day_blackout', 'חסימת מקצוע ביום'
         CUSTOM = 'custom', 'מותאם אישית'
 
     class Priority(models.TextChoices):

@@ -214,6 +214,67 @@ class SnapshotRoundTripTest(TestCase):
         self.assertEqual(self.tt.snapshots.count(), MAX_SNAPSHOTS_PER_TIMETABLE)
 
 
+class SubjectDayBlackoutTest(TestCase):
+    """subject_day_blackout — forbid a (subject, day) for a class (or all
+    classes). Verifies (a) the AI tool creates the constraint correctly and
+    (b) the solver actually respects it (no lessons of that subject land on
+    the blocked day for the targeted class)."""
+
+    def test_create_via_ai_tool(self):
+        from apps.ai_assistant.tools.constraints import _create_constraint
+        from apps.ai_assistant.tools.base import ToolContext
+
+        school, klass, _teacher, subject = _make_school_with_minimum_load()
+        ctx = ToolContext(request=None, module='global',
+                          view_state={'school_id': school.id})
+
+        # Missing days → rejected.
+        bad = _create_constraint({
+            'constraint_type': 'subject_day_blackout',
+            'subject_id': subject.id,
+            'class_id': klass.id,
+        }, ctx)
+        self.assertIn('error', bad)
+
+        # Happy path with a name (Hebrew) and explicit day.
+        ok = _create_constraint({
+            'constraint_type': 'subject_day_blackout',
+            'subject_id': subject.id,
+            'class_id': klass.id,
+            'days': [3],
+        }, ctx)
+        self.assertTrue(ok.get('created'), ok)
+        c = Constraint.objects.get(id=ok['constraint_id'])
+        self.assertEqual(c.constraint_type, 'subject_day_blackout')
+        self.assertEqual(c.parameters['days'], [3])
+
+    def test_solver_respects_blocked_day(self):
+        # Single class, one subject, 5 weekly lessons across Sun..Thu period 1.
+        # Block the subject on Tuesday (day=3) — solver should pack 5 lessons
+        # into the remaining 4 days. We accept it failing too (legitimate
+        # infeasibility), but if it SUCCEEDS, the day-3 slot must be empty.
+        school, klass, teacher, subject = _make_school_with_minimum_load()
+        # Give 4 weekly hours so 4 days (Sun, Mon, Wed, Thu) are enough.
+        TeachingAssignment.objects.filter(school_class=klass).delete()
+        TeachingAssignment.objects.create(
+            subject=subject, teacher=teacher, school_class=klass,
+            weekly_hours=Decimal('4'),
+        )
+        Constraint.objects.create(
+            school=school, name='no Tuesday math',
+            constraint_type='subject_day_blackout',
+            priority=Constraint.Priority.HARD,
+            school_class=klass, subject=subject,
+            parameters={'days': [3]},
+        )
+        tt = Timetable.objects.create(school=school, name='t', academic_year='2026-2027')
+        ok = solve_timetable(tt, max_time_seconds=10)
+        self.assertTrue(ok, tt.solver_log)
+        # No entries on day 3.
+        bad = tt.entries.filter(time_slot__day=3).count()
+        self.assertEqual(bad, 0, 'subject was scheduled on a blacked-out day')
+
+
 class SnapshotEndpointsTest(TestCase):
     """The /api/timetables/{id}/snapshots/ endpoints — list, create, restore."""
 
