@@ -17,6 +17,7 @@ import LoginPage from './pages/Login';
 import AdminUsersPage from './pages/Admin/Users';
 import AdminAuditPage from './pages/Admin/Audit';
 import ManagePage from './pages/Manage';
+import HistoryPage from './pages/History';
 import AiAssistant, { AiAssistantProvider } from './components/AiAssistant';
 import { BuildProgressProvider, BuildProgressBanner } from './components/BuildProgress';
 import { getMe } from './api/client';
@@ -508,6 +509,7 @@ function App() {
                   <Route path="/import" element={<ImportPage />} />
                   <Route path="/constraints" element={<ConstraintsPage />} />
                   <Route path="/timetable" element={<TimetablePage />} />
+                  <Route path="/history" element={<HistoryPage />} />
                   <Route path="/manage" element={<ManagePage />} />
                   <Route
                     path="/admin/users"

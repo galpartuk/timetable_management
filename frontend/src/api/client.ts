@@ -136,6 +136,27 @@ export const getTimetableByClass = (timetableId: number, classId: number) =>
 export const getTimetableByTeacher = (timetableId: number, teacherId: number) =>
   api.get(`/timetables/${timetableId}/by-teacher/${teacherId}/`);
 
+export interface TimetableSnapshotRow {
+  id: number;
+  created_at: string;
+  triggered_by: 'ai_move' | 'ai_swap' | 'manual_move' | 'manual_swap'
+              | 'manual_save' | 'before_restore' | 'before_build';
+  triggered_by_display: string;
+  description: string;
+  entry_count: number;
+  actor_name: string | null;
+}
+
+export const getTimetableSnapshots = (timetableId: number) =>
+  api.get<TimetableSnapshotRow[]>(`/timetables/${timetableId}/snapshots/`);
+
+export const createTimetableSnapshot = (timetableId: number, description?: string) =>
+  api.post<TimetableSnapshotRow>(`/timetables/${timetableId}/snapshots/`,
+    description ? { description } : {});
+
+export const restoreTimetableSnapshot = (timetableId: number, snapshotId: number) =>
+  api.post(`/timetables/${timetableId}/snapshots/${snapshotId}/restore/`);
+
 export interface TeacherQualityRow {
   id: number;
   name: string;

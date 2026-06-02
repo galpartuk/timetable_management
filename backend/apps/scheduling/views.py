@@ -3,11 +3,13 @@ from collections import defaultdict
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Constraint, Timetable, TimetableEntry
+from .models import Constraint, Timetable, TimetableEntry, TimetableSnapshot
 from .serializers import (
     ConstraintSerializer, TimetableSerializer,
     TimetableListSerializer, TimetableEntrySerializer,
+    TimetableSnapshotSerializer, TimetableSnapshotListSerializer,
 )
+from .snapshots import restore_snapshot, snapshot_timetable
 from .tasks import is_generating, start_generation
 
 
@@ -73,6 +75,15 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # Snapshot before the rebuild so a regretted rebuild can be undone
+        # from the history page. Only snapshot when there ARE entries to
+        # save — first-time builds have nothing worth preserving.
+        if timetable.entries.exists():
+            snapshot_timetable(
+                timetable, TimetableSnapshot.TriggeredBy.BEFORE_BUILD,
+                description='לפני בנייה אוטומטית חדשה',
+                actor=request.user,
+            )
         started = start_generation(timetable, max_time_seconds=cap)
         if not started:
             # Lost the race with another request — same outcome as above.
@@ -221,6 +232,13 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 'conflict_entry_id': class_conflict.id,
             }, status=status.HTTP_409_CONFLICT)
 
+        # Snapshot before mutation so the user can roll the manual edit back
+        # from the history page if they regret it.
+        snapshot_timetable(
+            timetable, TimetableSnapshot.TriggeredBy.MANUAL_MOVE,
+            description=f'{entry.subject} ({entry.school_class}) ל-{new_slot}',
+            actor=request.user,
+        )
         entry.time_slot = new_slot
         entry.save(update_fields=['time_slot'])
         return Response(TimetableEntrySerializer(entry).data)
@@ -237,12 +255,55 @@ class TimetableViewSet(viewsets.ModelViewSet):
         eb = TimetableEntry.objects.filter(id=b, timetable=timetable).first()
         if not ea or not eb:
             return Response({'error': 'entry not found'}, status=status.HTTP_404_NOT_FOUND)
+        snapshot_timetable(
+            timetable, TimetableSnapshot.TriggeredBy.MANUAL_SWAP,
+            description=f'{ea.subject} ↔ {eb.subject}',
+            actor=request.user,
+        )
         ea.time_slot, eb.time_slot = eb.time_slot, ea.time_slot
         ea.save(update_fields=['time_slot'])
         eb.save(update_fields=['time_slot'])
         return Response({
             'a': TimetableEntrySerializer(ea).data,
             'b': TimetableEntrySerializer(eb).data,
+        })
+
+    @action(detail=True, methods=['get', 'post'])
+    def snapshots(self, request, pk=None):
+        """GET → list snapshots for this timetable (most recent first).
+        POST → create a manual snapshot of the current entries.
+
+        Restoration is on a separate URL (snapshots/<id>/restore/) so the
+        common safe operation (list) is a plain GET."""
+        timetable = self.get_object()
+        if request.method == 'POST':
+            description = (request.data or {}).get('description', '').strip()
+            snap = snapshot_timetable(
+                timetable, TimetableSnapshot.TriggeredBy.MANUAL_SAVE,
+                description=description or 'שמירה ידנית של מצב המערכת',
+                actor=request.user,
+            )
+            return Response(TimetableSnapshotListSerializer(snap).data,
+                            status=status.HTTP_201_CREATED)
+        qs = timetable.snapshots.all()
+        return Response(TimetableSnapshotListSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path=r'snapshots/(?P<snapshot_id>\d+)/restore')
+    def restore_snapshot(self, request, pk=None, snapshot_id=None):
+        """Replace this timetable's entries with the snapshot's contents.
+        The pre-restore state is itself snapshotted so the user can undo."""
+        timetable = self.get_object()
+        snap = TimetableSnapshot.objects.filter(
+            id=snapshot_id, timetable=timetable,
+        ).first()
+        if not snap:
+            return Response({'error': 'snapshot not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        restored = restore_snapshot(snap, actor=request.user)
+        return Response({
+            'ok': True,
+            'snapshot_id': snap.id,
+            'entries_restored': restored,
         })
 
     @action(detail=True, methods=['post'], url_path='toggle-lock')
