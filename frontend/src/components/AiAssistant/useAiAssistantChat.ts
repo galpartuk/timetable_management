@@ -14,6 +14,12 @@ interface ChatState {
   toolEvents: ToolEvent[];     // inline status pills for read-only tools
   pendingProposals: ToolProposal[];   // mutating tools awaiting confirmation
   pendingAssistantContent: ContentBlock[] | null;  // ...the message they belong to
+  // Tool-results collected as the user approves/rejects proposals one by one.
+  // Flushed into ONE user message after the last proposal resolves — keeping
+  // them in the order Anthropic expects (one tool_result per tool_use in the
+  // preceding assistant turn). Storing intermediate results on `messages`
+  // directly produced duplicate assistant turns and a 400 from the API.
+  pendingResults: Array<{ tool_use_id: string; content: string; is_error: boolean }>;
   isStreaming: boolean;
   error: string | null;
 }
@@ -24,6 +30,7 @@ const INITIAL: ChatState = {
   toolEvents: [],
   pendingProposals: [],
   pendingAssistantContent: null,
+  pendingResults: [],
   isStreaming: false,
   error: null,
 };
@@ -79,7 +86,7 @@ export function useAiAssistantChat() {
     decision: 'approve' | 'reject',
     ctx: ModuleContext,
   ) => {
-    const { pendingAssistantContent, pendingProposals, messages } = state;
+    const { pendingAssistantContent, pendingProposals, pendingResults, messages } = state;
     if (!pendingAssistantContent) return;
 
     // 1. Execute (or refuse) the tool. Backend runs it for `approve`; for
@@ -115,37 +122,58 @@ export function useAiAssistantChat() {
       toolResultContent = JSON.stringify({ declined: true, reason: 'user rejected the proposed action' });
     }
 
-    // 2. Append assistant turn (with the tool_use) and a user tool_result
-    //    so the model can react to whatever happened.
+    // 2. Buffer this result. The assistant turn (with ALL its tool_use blocks)
+    //    can only be appended ONCE, and it must be followed by exactly ONE
+    //    user message containing ALL the matching tool_results — otherwise
+    //    the API returns 400 because the same tool_use ids end up duplicated
+    //    across turns and each user turn is missing tool_results for the
+    //    other tool_use blocks. Buffer until the last proposal resolves.
+    const collectedResults = [
+      ...pendingResults,
+      { tool_use_id: proposal.id, content: toolResultContent, is_error: isError },
+    ];
+    const remaining = pendingProposals.filter((p) => p.id !== proposal.id);
+
+    if (remaining.length > 0) {
+      // Still waiting on other approvals — don't touch `messages` yet.
+      setState((s) => ({
+        ...s,
+        pendingProposals: remaining,
+        pendingResults: collectedResults,
+        streamingText: '',
+        toolEvents: [],
+      }));
+      return;
+    }
+
+    // 3. All resolved. Commit exactly one assistant turn + one user turn
+    //    with every collected tool_result, in proposal order. Order matters
+    //    for the model's reasoning but Anthropic doesn't require it match
+    //    tool_use order; sorting by tool_use_id keeps it deterministic.
     const assistantMsg: ChatMessage = { role: 'assistant', content: pendingAssistantContent };
     const toolResultMsg: ChatMessage = {
       role: 'user',
-      content: [{
+      content: collectedResults.map((r) => ({
         type: 'tool_result',
-        tool_use_id: proposal.id,
-        content: toolResultContent,
-        is_error: isError,
-      }],
+        tool_use_id: r.tool_use_id,
+        content: r.content,
+        is_error: r.is_error,
+      })),
     };
     const next = [...messages, assistantMsg, toolResultMsg];
 
-    // 3. Remove this proposal from the pending list. If others remain,
-    //    keep waiting for them. Once all are resolved, ask the model to
-    //    wrap up.
-    const remaining = pendingProposals.filter((p) => p.id !== proposal.id);
     setState((s) => ({
       ...s,
       messages: next,
-      pendingProposals: remaining,
-      pendingAssistantContent: remaining.length ? s.pendingAssistantContent : null,
+      pendingProposals: [],
+      pendingAssistantContent: null,
+      pendingResults: [],
       streamingText: '',
       toolEvents: [],
+      isStreaming: true,
+      error: null,
     }));
-
-    if (remaining.length === 0) {
-      setState((s) => ({ ...s, isStreaming: true, error: null }));
-      await driveStream(next, ctx);
-    }
+    await driveStream(next, ctx);
   }, [state]);
 
   /** Internal: drive a single round of streaming, then commit to history. */
