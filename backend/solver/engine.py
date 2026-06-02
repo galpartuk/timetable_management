@@ -289,62 +289,27 @@ def _add_window_terms(
 
 def _infeasibility_diagnostics(
     school, vars_by_class: dict, vars_by_teacher: dict,
-    num_slots: int, teachers_by_id: dict,
+    num_slots: int, teachers_by_id: dict, *, timetable=None,
 ) -> list[str]:
-    """Surface the most likely causes of infeasibility — over-allocated
-    teachers / classes — without re-running the solver.
+    """Surface the most likely causes of infeasibility — delegates to the
+    shared pre-flight analyzer so post-fail and pre-flight stay in sync.
 
-    A class with > num_slots lesson-vars can't fit. A teacher likewise.
-    For both we list the top 5 offenders.
+    The vars_* / num_slots / teachers_by_id arguments are kept for backward
+    compatibility but ignored: the analyzer reads the DB directly so it
+    can include constraint-stacking analysis the var graph doesn't expose.
     """
-    from apps.school.models import SchoolClass
-    from apps.subjects.models import Teacher
+    from .feasibility import analyze
 
-    diagnostics: list[str] = []
-
-    over_classes = [
-        (cid, len(vs))
-        for cid, vs in vars_by_class.items()
-        if len(vs) > num_slots
-    ]
-    over_classes.sort(key=lambda x: -x[1])
-    for cid, n in over_classes[:5]:
-        cls = SchoolClass.objects.filter(id=cid).select_related('grade').first()
-        if cls:
-            diagnostics.append(
-                f'כיתה {cls.display_name}: {n} שיעורים אך רק {num_slots} משבצות'
-            )
-
-    over_teachers = [
-        (tid, len(vs))
-        for tid, vs in vars_by_teacher.items()
-        if len(vs) > num_slots
-    ]
-    over_teachers.sort(key=lambda x: -x[1])
-    for tid, n in over_teachers[:5]:
-        t = teachers_by_id.get(tid)
-        if t:
-            diagnostics.append(
-                f'מורה {t}: {n} שיעורים אך רק {num_slots} משבצות'
-            )
-
-    # Day-off vs load impossibility: if a teacher has > (num_slots - periods_per_day_off)
-    # lessons but a day-off, they can't fit.
-    for tid, vs in vars_by_teacher.items():
-        t = teachers_by_id.get(tid)
-        if t and t.day_off is not None:
-            slots_lost_to_day_off = num_slots // 5  # 5 days
-            if len(vs) > num_slots - slots_lost_to_day_off:
-                diagnostics.append(
-                    f'מורה {t}: {len(vs)} שיעורים אך יום חופש מקטין את המכסה ל-{num_slots - slots_lost_to_day_off}'
-                )
-
-    if not diagnostics:
-        diagnostics.append(
-            'לא נמצא גורם חד-משמעי. סביר להניח שהאילוצים סותרים '
-            '(לדוגמה: כיתה דורשת חלון לארוחה אך אין שעה פנויה).'
+    report = analyze(school, timetable=timetable)
+    lines: list[str] = [issue.message for issue in report.blockers[:8]]
+    if not lines:
+        lines.extend(issue.message for issue in report.warnings[:5])
+    if not lines:
+        lines.append(
+            'לא נמצא גורם חד-משמעי בבדיקה האוטומטית. '
+            'בדקו ידנית התנגשויות בין אילוצים (למשל הפסקת אוכל + עומס יומי גבוה).'
         )
-    return diagnostics
+    return lines
 
 
 def _add_load_spread_terms(
@@ -770,7 +735,7 @@ def solve_timetable(timetable, *, max_time_seconds: int = 300):
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         diagnostics = _infeasibility_diagnostics(
             timetable.school, vars_by_class, vars_by_teacher,
-            num_slots, teachers_by_id,
+            num_slots, teachers_by_id, timetable=timetable,
         )
         timetable.solver_log = (
             f'הפתרון נכשל: {status_label}\n'
