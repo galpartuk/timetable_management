@@ -18,11 +18,12 @@ interface Props {
 
 /** Message list + composer + quick actions, all in one panel. */
 export function ChatPanel({ ctx }: Props) {
-  const { state, sendMessage, resolveProposal } = useAiAssistantChat();
-  const { consumePrefill, state: { autoApprove } } = useAiAssistant();
+  const { state, sendMessage, resolveProposal, reset } = useAiAssistantChat();
+  const { consumePrefill, state: { autoApprove, clearRequest } } = useAiAssistant();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoResolvingRef = useRef(false);
+  const lastClearRef = useRef(clearRequest);
 
   // Pull a one-shot prefill set via openWith(text) — used by handoffs like
   // the lesson popover so the user lands in the panel with a ready prompt.
@@ -31,6 +32,17 @@ export function ChatPanel({ ctx }: Props) {
     if (text) setDraft(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Wipe in-memory + localStorage history whenever the shell asks
+  // (requestClear bumps the counter). The ref skips the initial mount so
+  // we don't reset on first render.
+  useEffect(() => {
+    if (clearRequest !== lastClearRef.current) {
+      lastClearRef.current = clearRequest;
+      reset();
+      setDraft('');
+    }
+  }, [clearRequest, reset]);
 
   // Auto-approve mode: when on AND proposals appear, click "approve" on each
   // sequentially. The chat hook already buffers tool_results across multiple

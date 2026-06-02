@@ -1,6 +1,43 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { streamChat } from './streamClient';
 import type { ChatMessage, ContentBlock, ModuleContext, ToolProposal } from './types';
+
+// Persist the chat across page reloads + drawer toggles. localStorage is
+// per-browser, so this isn't a "cross-device history" feature — just
+// continuity. Versioned key so we can change the shape later without
+// reading stale JSON.
+const STORAGE_KEY = 'ai_assistant.chat_history.v1';
+// Cap on persisted messages — long tool_result content blocks can be big
+// (a single list_classes result is ~10KB) and localStorage tops out around
+// 5MB. 100 messages × ~10KB = 1MB worst case; comfortable headroom.
+const MAX_PERSISTED_MESSAGES = 100;
+
+function loadStoredMessages(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistMessages(messages: ChatMessage[]): void {
+  try {
+    const trimmed = messages.length > MAX_PERSISTED_MESSAGES
+      ? messages.slice(-MAX_PERSISTED_MESSAGES)
+      : messages;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Quota exceeded or storage disabled — silent. The in-memory state
+    // still works; only restoration on next load is lost.
+  }
+}
+
+function clearStoredMessages(): void {
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+}
 
 interface ToolEvent {
   name: string;
@@ -49,12 +86,27 @@ const INITIAL: ChatState = {
  *   so we can append it on confirmation along with a tool_result block.
  */
 export function useAiAssistantChat() {
-  const [state, setState] = useState<ChatState>(INITIAL);
+  // Hydrate from localStorage on hook init so the user picks up where they
+  // left off after a page reload or drawer reopen. Only `messages` is
+  // restored — streaming/pending/tool-event slices belong to an in-flight
+  // turn and don't make sense to revive across loads.
+  const [state, setState] = useState<ChatState>(() => ({
+    ...INITIAL,
+    messages: loadStoredMessages(),
+  }));
   const abortRef = useRef<AbortController | null>(null);
+
+  // Mirror every messages update to localStorage. Cheap (a single
+  // JSON.stringify on the trimmed array) and synchronous, so reload-mid-
+  // turn keeps everything that's been committed to history.
+  useEffect(() => {
+    persistMessages(state.messages);
+  }, [state.messages]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    clearStoredMessages();
     setState(INITIAL);
   }, []);
 

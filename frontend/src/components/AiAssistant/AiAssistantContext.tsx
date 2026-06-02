@@ -16,6 +16,10 @@ interface State {
    *  showing a confirmation card. Paired with the snapshot/history system
    *  so the user can roll back if an auto-approved action was wrong. */
   autoApprove: boolean;
+  /** Bumped to request a chat history wipe. ChatPanel watches this and
+   *  calls reset() — we route through context instead of wiring a ref
+   *  because the menu trigger lives in the AiAssistant shell, not the panel. */
+  clearRequest: number;
 }
 
 interface Api {
@@ -28,6 +32,8 @@ interface Api {
   toggle: () => void;
   consumePrefill: () => string | null;
   setAutoApprove: (on: boolean) => void;
+  /** Trigger a chat-history wipe (clears in-memory + localStorage). */
+  requestClear: () => void;
 }
 
 const DEFAULT_CTX: ModuleContext = { module: 'global', viewState: {}, quickActions: [] };
@@ -45,6 +51,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       return false;
     }
   });
+  const [clearRequest, setClearRequest] = useState(0);
 
   const setContext = useCallback((next: ModuleContext) => setCtxState(next), []);
   const open = useCallback(() => setIsOpen(true), []);
@@ -67,6 +74,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       // localStorage unavailable (private mode, etc.) — in-memory is fine.
     }
   }, []);
+  const requestClear = useCallback(() => setClearRequest((n) => n + 1), []);
 
   // Cmd/Ctrl+K opens the Command Center from anywhere.
   useEffect(() => {
@@ -81,9 +89,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   }, [toggle]);
 
   const value = useMemo<Api>(() => ({
-    state: { ctx, isOpen, prefill, autoApprove },
-    setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove,
-  }), [ctx, isOpen, prefill, autoApprove, setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove]);
+    state: { ctx, isOpen, prefill, autoApprove, clearRequest },
+    setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove, requestClear,
+  }), [ctx, isOpen, prefill, autoApprove, clearRequest, setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove, requestClear]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
