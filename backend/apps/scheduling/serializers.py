@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Constraint, Timetable, TimetableEntry
+from .models import Constraint, Timetable, TimetableEntry, TimetableSnapshot
 
 
 class ConstraintSerializer(serializers.ModelSerializer):
@@ -59,3 +59,33 @@ class TimetableListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Timetable
         fields = ['id', 'name', 'academic_year', 'status', 'created_at', 'updated_at', 'entry_count']
+
+
+class TimetableSnapshotListSerializer(serializers.ModelSerializer):
+    """Lean payload for the history list — omits the full entries blob."""
+    triggered_by_display = serializers.CharField(source='get_triggered_by_display', read_only=True)
+    entry_count = serializers.SerializerMethodField()
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TimetableSnapshot
+        fields = [
+            'id', 'created_at', 'triggered_by', 'triggered_by_display',
+            'description', 'entry_count', 'actor_name',
+        ]
+
+    def get_entry_count(self, obj) -> int:
+        data = obj.entries_data
+        return len(data) if isinstance(data, list) else 0
+
+    def get_actor_name(self, obj):
+        if not obj.actor:
+            return None
+        return (obj.actor.get_full_name() or obj.actor.username or '').strip() or None
+
+
+class TimetableSnapshotSerializer(TimetableSnapshotListSerializer):
+    """Full payload (includes the entries blob) — used when restoring."""
+
+    class Meta(TimetableSnapshotListSerializer.Meta):
+        fields = TimetableSnapshotListSerializer.Meta.fields + ['entries_data']

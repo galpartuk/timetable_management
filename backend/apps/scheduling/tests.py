@@ -17,7 +17,10 @@ from rest_framework.test import APIClient
 
 from apps.school.models import Grade, School, SchoolClass, TimeSlot
 from apps.subjects.models import Subject, Teacher, TeachingAssignment
-from apps.scheduling.models import Constraint, Timetable
+from apps.scheduling.models import Constraint, Timetable, TimetableEntry, TimetableSnapshot
+from apps.scheduling.snapshots import (
+    MAX_SNAPSHOTS_PER_TIMETABLE, restore_snapshot, snapshot_timetable,
+)
 from solver.engine import solve_timetable
 
 
@@ -158,3 +161,104 @@ class AutoTeacherDayOffConstraintTest(TestCase):
         self.assertTrue(result2.get('updated'))
         self.assertIsNone(result2.get('constraint_id'))
         self.assertFalse(Constraint.objects.filter(id=c.id).exists())
+
+
+class SnapshotRoundTripTest(TestCase):
+    """Snapshot → mutate → restore must put the timetable back to byte-for-byte
+    the same shape. This is the foundation of the auto-approve safety net."""
+
+    def setUp(self):
+        self.school, self.klass, self.teacher, self.subject = _make_school_with_minimum_load()
+        self.tt = Timetable.objects.create(
+            school=self.school, name='snap-tt', academic_year='2026-2027',
+            status=Timetable.Status.COMPLETED,
+        )
+        # Seed two entries we can mutate + restore.
+        ts1 = TimeSlot.objects.get(school=self.school, day=1, period=1)
+        ts2 = TimeSlot.objects.get(school=self.school, day=2, period=1)
+        self.e1 = TimetableEntry.objects.create(
+            timetable=self.tt, school_class=self.klass, subject=self.subject,
+            teacher=self.teacher, time_slot=ts1,
+        )
+        self.e2 = TimetableEntry.objects.create(
+            timetable=self.tt, school_class=self.klass, subject=self.subject,
+            teacher=self.teacher, time_slot=ts2,
+        )
+        self.ts1, self.ts2 = ts1, ts2
+
+    def test_snapshot_then_restore_repopulates_entries(self):
+        snap = snapshot_timetable(
+            self.tt, TimetableSnapshot.TriggeredBy.MANUAL_SAVE,
+            description='test save',
+        )
+        self.assertIsNotNone(snap)
+        self.assertEqual(len(snap.entries_data), 2)
+
+        # Wipe the entries — simulates a bad rebuild / destructive AI action.
+        TimetableEntry.objects.filter(timetable=self.tt).delete()
+        self.assertEqual(self.tt.entries.count(), 0)
+
+        restored = restore_snapshot(snap)
+        self.assertEqual(restored, 2)
+        self.assertEqual(self.tt.entries.count(), 2)
+        # Restore also created a before_restore snapshot of the (empty) state.
+        kinds = list(self.tt.snapshots.values_list('triggered_by', flat=True))
+        self.assertIn(TimetableSnapshot.TriggeredBy.BEFORE_RESTORE, kinds)
+
+    def test_prune_caps_at_max(self):
+        for i in range(MAX_SNAPSHOTS_PER_TIMETABLE + 5):
+            snapshot_timetable(
+                self.tt, TimetableSnapshot.TriggeredBy.MANUAL_SAVE,
+                description=f'#{i}',
+            )
+        self.assertEqual(self.tt.snapshots.count(), MAX_SNAPSHOTS_PER_TIMETABLE)
+
+
+class SnapshotEndpointsTest(TestCase):
+    """The /api/timetables/{id}/snapshots/ endpoints — list, create, restore."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        self.school, self.klass, self.teacher, self.subject = _make_school_with_minimum_load()
+        self.tt = Timetable.objects.create(
+            school=self.school, name='ep-tt', academic_year='2026-2027',
+            status=Timetable.Status.COMPLETED,
+        )
+        ts1 = TimeSlot.objects.get(school=self.school, day=1, period=1)
+        TimetableEntry.objects.create(
+            timetable=self.tt, school_class=self.klass, subject=self.subject,
+            teacher=self.teacher, time_slot=ts1,
+        )
+        self.user = get_user_model().objects.create_user(username='snap', password='p')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_post_creates_manual_snapshot_and_get_lists_it(self):
+        resp = self.client.post(f'/api/timetables/{self.tt.id}/snapshots/',
+                                {'description': 'before risky stuff'},
+                                format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['triggered_by'], 'manual_save')
+        self.assertEqual(resp.data['entry_count'], 1)
+
+        listing = self.client.get(f'/api/timetables/{self.tt.id}/snapshots/')
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(len(listing.data), 1)
+        self.assertEqual(listing.data[0]['description'], 'before risky stuff')
+
+    def test_restore_endpoint_roundtrips(self):
+        # Create a snapshot, wipe entries, restore — count comes back.
+        self.client.post(f'/api/timetables/{self.tt.id}/snapshots/', {}, format='json')
+        snap_id = self.tt.snapshots.first().id
+
+        TimetableEntry.objects.filter(timetable=self.tt).delete()
+        self.assertEqual(self.tt.entries.count(), 0)
+
+        resp = self.client.post(
+            f'/api/timetables/{self.tt.id}/snapshots/{snap_id}/restore/',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['entries_restored'], 1)
+        self.assertEqual(self.tt.entries.count(), 1)

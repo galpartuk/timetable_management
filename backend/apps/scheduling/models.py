@@ -89,6 +89,53 @@ class Timetable(models.Model):
         return f'{self.name} - {self.academic_year}'
 
 
+class TimetableSnapshot(models.Model):
+    """A point-in-time copy of a Timetable's entries.
+
+    Created automatically before every mutating action (AI moves/swaps,
+    manual drag-drop) so the user can roll back without rebuilding the
+    whole timetable from scratch. Entries are serialized to JSON rather
+    than cloned into a parallel table so the snapshot schema stays simple
+    and survives minor model changes — restore = delete current entries +
+    recreate from JSON in a transaction.
+
+    Pruned per-timetable at write time (newest 50 kept); storage is a few
+    KB per snapshot so the cap is generous.
+    """
+    class TriggeredBy(models.TextChoices):
+        AI_MOVE = 'ai_move', 'הזזת שיעור על־ידי AI'
+        AI_SWAP = 'ai_swap', 'החלפת שיעורים על־ידי AI'
+        MANUAL_MOVE = 'manual_move', 'הזזה ידנית'
+        MANUAL_SWAP = 'manual_swap', 'החלפה ידנית'
+        MANUAL_SAVE = 'manual_save', 'שמירה ידנית'
+        BEFORE_RESTORE = 'before_restore', 'לפני שחזור'
+        BEFORE_BUILD = 'before_build', 'לפני בנייה אוטומטית'
+
+    timetable = models.ForeignKey(
+        'Timetable', on_delete=models.CASCADE, related_name='snapshots',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='נוצר ב')
+    triggered_by = models.CharField(
+        max_length=20, choices=TriggeredBy.choices, verbose_name='מקור',
+    )
+    description = models.CharField(max_length=300, blank=True, verbose_name='תיאור')
+    # List of dicts: {school_class_id, subject_id, teacher_id, time_slot_id,
+    # room_id, locked}. One dict per TimetableEntry at snapshot time.
+    entries_data = models.JSONField(default=list, verbose_name='נתוני שיעורים')
+    actor = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name='ביצע/ה',
+    )
+
+    class Meta:
+        verbose_name = 'גרסת מערכת'
+        verbose_name_plural = 'גרסאות מערכת'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.timetable.name} @ {self.created_at:%Y-%m-%d %H:%M} ({self.get_triggered_by_display()})'
+
+
 class TimetableEntry(models.Model):
     timetable = models.ForeignKey(Timetable, on_delete=models.CASCADE, related_name='entries')
     school_class = models.ForeignKey(

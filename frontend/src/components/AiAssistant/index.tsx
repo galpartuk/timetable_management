@@ -1,8 +1,11 @@
-import { Box, Drawer, Fab, IconButton, Tooltip, Typography } from '@mui/material';
+import { Box, Drawer, Fab, FormControlLabel, IconButton, Menu, MenuItem, Switch, Tooltip, Typography } from '@mui/material';
+import { useState } from 'react';
 import {
   AutoAwesome as SparkleIcon,
   Close as CloseIcon,
   KeyboardCommandKey as CmdIcon,
+  Settings as SettingsIcon,
+  BoltOutlined as BoltIcon,
 } from '@mui/icons-material';
 import { ChatPanel } from './ChatPanel';
 import { useAiAssistant } from './AiAssistantContext';
@@ -30,7 +33,8 @@ const MODULE_TITLES: Record<string, string> = {
  * context via `useAiAssistantContext` and the panel reads it on send.
  */
 export default function AiAssistant() {
-  const { state: { ctx, isOpen }, close, open } = useAiAssistant();
+  const { state: { ctx, isOpen, autoApprove }, close, open, setAutoApprove } = useAiAssistant();
+  const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null);
   const title = MODULE_TITLES[ctx.module] ?? MODULE_TITLES.global;
 
   return (
@@ -128,10 +132,60 @@ export default function AiAssistant() {
                 <CmdIcon sx={{ fontSize: 12 }} /> + K לפתיחה מהירה
               </Typography>
             </Box>
+            <Tooltip title="הגדרות עוזר">
+              <IconButton size="small" onClick={(e) => setSettingsAnchor(e.currentTarget)} aria-label="assistant settings">
+                <SettingsIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <IconButton size="small" onClick={close} aria-label="close assistant">
               <CloseIcon fontSize="small" />
             </IconButton>
           </Box>
+
+          <Menu
+            anchorEl={settingsAnchor}
+            open={!!settingsAnchor}
+            onClose={() => setSettingsAnchor(null)}
+            slotProps={{ paper: { sx: { minWidth: 280 } } }}
+          >
+            <MenuItem disableRipple sx={{ alignItems: 'flex-start', flexDirection: 'column', py: 1.25 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={autoApprove}
+                    onChange={(_, on) => setAutoApprove(on)}
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography sx={{ fontSize: 13, fontWeight: 600 }}>אישור אוטומטי</Typography>
+                    <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
+                      פעולות יבוצעו בלי כרטיס אישור. כל שינוי נשמר ב"ניהול גרסאות" וניתן לשחזר.
+                    </Typography>
+                  </Box>
+                }
+                sx={{ ml: 0, alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.25 } }}
+              />
+            </MenuItem>
+          </Menu>
+
+          {/* Banner when auto-approve is on, so the user is never surprised. */}
+          {autoApprove && (
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: 1,
+              px: 2, py: 1,
+              background: 'rgba(245,158,11,0.12)',
+              color: '#92400e',
+              borderBottom: '1px solid rgba(245,158,11,0.30)',
+              fontSize: 12, fontWeight: 600,
+            }}>
+              <BoltIcon sx={{ fontSize: 16 }} />
+              <Box sx={{ flex: 1 }}>
+                אישור אוטומטי פעיל — פעולות יבוצעו ללא כרטיסי אישור.
+                ניתן לשחזר ב<a href="/history" style={{ color: 'inherit', textDecoration: 'underline' }}>ניהול גרסאות</a>.
+              </Box>
+            </Box>
+          )}
 
           {/* Per-toggle remount so each open starts fresh; switch the key
               if you'd rather persist history across closes. */}

@@ -12,6 +12,10 @@ interface State {
   isOpen: boolean;
   /** One-shot prefill — ChatPanel reads it on open and clears via consumePrefill. */
   prefill: string | null;
+  /** When true, the chat hook auto-approves every tool proposal without
+   *  showing a confirmation card. Paired with the snapshot/history system
+   *  so the user can roll back if an auto-approved action was wrong. */
+  autoApprove: boolean;
 }
 
 interface Api {
@@ -23,15 +27,24 @@ interface Api {
   close: () => void;
   toggle: () => void;
   consumePrefill: () => string | null;
+  setAutoApprove: (on: boolean) => void;
 }
 
 const DEFAULT_CTX: ModuleContext = { module: 'global', viewState: {}, quickActions: [] };
+const AUTO_APPROVE_KEY = 'ai_assistant.auto_approve';
 const Ctx = createContext<Api | null>(null);
 
 export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const [ctx, setCtxState] = useState<ModuleContext>(DEFAULT_CTX);
   const [isOpen, setIsOpen] = useState(false);
   const [prefill, setPrefill] = useState<string | null>(null);
+  const [autoApprove, setAutoApproveState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AUTO_APPROVE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const setContext = useCallback((next: ModuleContext) => setCtxState(next), []);
   const open = useCallback(() => setIsOpen(true), []);
@@ -46,6 +59,14 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     setPrefill(null);
     return v;
   }, [prefill]);
+  const setAutoApprove = useCallback((on: boolean) => {
+    setAutoApproveState(on);
+    try {
+      localStorage.setItem(AUTO_APPROVE_KEY, on ? '1' : '0');
+    } catch {
+      // localStorage unavailable (private mode, etc.) — in-memory is fine.
+    }
+  }, []);
 
   // Cmd/Ctrl+K opens the Command Center from anywhere.
   useEffect(() => {
@@ -60,9 +81,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   }, [toggle]);
 
   const value = useMemo<Api>(() => ({
-    state: { ctx, isOpen, prefill },
-    setContext, open, openWith, close, toggle, consumePrefill,
-  }), [ctx, isOpen, prefill, setContext, open, openWith, close, toggle, consumePrefill]);
+    state: { ctx, isOpen, prefill, autoApprove },
+    setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove,
+  }), [ctx, isOpen, prefill, autoApprove, setContext, open, openWith, close, toggle, consumePrefill, setAutoApprove]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

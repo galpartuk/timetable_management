@@ -19,6 +19,7 @@ import {
   ManageAccounts as UsersIcon,
   History as AuditIcon,
   IosShare as ExportIcon,
+  Restore as HistoryIcon,
 } from '@mui/icons-material';
 import { logout as apiLogout } from '../api/client';
 
@@ -50,6 +51,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
     { text: t('nav.timetable'), icon: <TimetableIcon fontSize="small" />, path: '/timetable' },
     { text: t('nav.data'), icon: <DataIcon fontSize="small" />, path: '/data' },
     { text: t('nav.constraints'), icon: <ConstraintIcon fontSize="small" />, path: '/constraints' },
+    { text: i18n.language === 'he' ? 'ניהול גרסאות' : 'Version history', icon: <HistoryIcon fontSize="small" />, path: '/history' },
     { text: t('nav.import'), icon: <UploadIcon fontSize="small" />, path: '/import' },
     { text: t('nav.manage'), icon: <ExportIcon fontSize="small" />, path: '/manage' },
   ];

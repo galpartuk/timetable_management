@@ -9,10 +9,17 @@ from collections import defaultdict
 from typing import Any, Dict
 
 from apps.school.models import SchoolClass, TimeSlot
-from apps.scheduling.models import Timetable, TimetableEntry
+from apps.scheduling.models import Timetable, TimetableEntry, TimetableSnapshot
+from apps.scheduling.snapshots import snapshot_timetable
 from apps.subjects.models import Subject, Teacher, TeachingAssignment
 
 from .base import Tool, ToolContext, register_tool
+
+
+def _actor(ctx: ToolContext):
+    request = getattr(ctx, 'request', None)
+    user = getattr(request, 'user', None) if request is not None else None
+    return user if (user and getattr(user, 'is_authenticated', False)) else None
 
 
 # Default school for tools that operate against a single school. Pulled from
@@ -225,6 +232,11 @@ def _move_entry(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
         }
 
     old_slot = str(entry.time_slot)
+    snapshot_timetable(
+        entry.timetable, TimetableSnapshot.TriggeredBy.AI_MOVE,
+        description=f'{entry.subject} ({entry.school_class}): {old_slot} → #{target_time_slot_id}',
+        actor=_actor(ctx),
+    )
     entry.time_slot_id = target_time_slot_id
     entry.save(update_fields=['time_slot'])
     entry.refresh_from_db()
@@ -521,6 +533,14 @@ def _run_generator(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
             'timetable_id': tt.id,
             'detail': 'A build is already running for this timetable; wait for it to finish.',
         }
+    # Save the current entries so an undo from /history can recover the
+    # pre-build schedule. Skip on first-time builds (nothing to preserve).
+    if tt.entries.exists():
+        snapshot_timetable(
+            tt, TimetableSnapshot.TriggeredBy.BEFORE_BUILD,
+            description='לפני בנייה אוטומטית חדשה',
+            actor=_actor(ctx),
+        )
     start_generation(tt)
     return {
         'status': 'started',
@@ -860,6 +880,11 @@ def _swap_entries(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
         }
 
     a_slot_str, b_slot_str = str(a.time_slot), str(b.time_slot)
+    snapshot_timetable(
+        a.timetable, TimetableSnapshot.TriggeredBy.AI_SWAP,
+        description=f'{a.subject} ↔ {b.subject}',
+        actor=_actor(ctx),
+    )
     try:
         with transaction.atomic():
             a.time_slot_id, b.time_slot_id = b.time_slot_id, a.time_slot_id
