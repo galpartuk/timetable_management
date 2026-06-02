@@ -716,6 +716,51 @@ def _suggest_improvements(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, 
     }
 
 
+def _check_feasibility(input: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    """Pre-flight: would solve_timetable return INFEASIBLE on the current
+    data + constraints? Cheaper than running the solver (no CP-SAT)."""
+    from apps.school.models import School
+    from solver.feasibility import analyze
+
+    school_id = _default_school_id(ctx)
+    school = School.objects.filter(id=school_id).first()
+    if not school:
+        return {'error': f'school id={school_id} not found'}
+
+    # Honor the optional timetable so 'locked' entries reduce the budget.
+    timetable_id = _resolve_timetable_id(input, ctx)
+    timetable = Timetable.objects.filter(id=timetable_id).first() if timetable_id else None
+
+    report = analyze(school, timetable=timetable)
+    return report.as_dict()
+
+
+register_tool(Tool(
+    name='check_feasibility',
+    description=(
+        'Pre-flight check: predict whether a build will return INFEASIBLE '
+        'before running the solver. Returns blockers (definite '
+        'infeasibility — class/teacher overload, constraint stacking that '
+        'leaves too few slots, subject-day blackout overload), warnings '
+        '(tight budgets that may or may not solve), and info. '
+        'ALWAYS call this BEFORE run_generator — if blockers exist, show '
+        'them to the user instead of wasting a 30s build that will fail.'
+    ),
+    input_schema={
+        'type': 'object',
+        'properties': {
+            'school_id': {'type': 'integer'},
+            'timetable_id': {
+                'type': 'integer',
+                'description': 'Optional — when set, locked entries on this timetable count as already-taken slots.',
+            },
+        },
+    },
+    handler=_check_feasibility,
+    modules=['timetable', 'constraints', 'global'],
+))
+
+
 register_tool(Tool(
     name='suggest_improvements',
     description=(

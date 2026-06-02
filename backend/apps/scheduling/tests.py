@@ -214,6 +214,65 @@ class SnapshotRoundTripTest(TestCase):
         self.assertEqual(self.tt.snapshots.count(), MAX_SNAPSHOTS_PER_TIMETABLE)
 
 
+class FeasibilityAnalyzerTest(TestCase):
+    """The pre-flight analyzer must catch the cases that would otherwise
+    cost a 3-30s solver round-trip and a "no clear cause" message."""
+
+    def test_clean_setup_has_no_blockers(self):
+        from solver.feasibility import analyze
+        school, *_ = _make_school_with_minimum_load()
+        report = analyze(school)
+        self.assertTrue(report.feasible_likely, report.as_dict())
+        self.assertEqual(report.blockers, [])
+
+    def test_class_overload_is_a_blocker(self):
+        from solver.feasibility import analyze
+        from datetime import time
+        school, klass, teacher, subject = _make_school_with_minimum_load()
+        # The fixture has 5 time slots (one per day, period 1). Pile 20
+        # weekly hours on the class → 20 lessons, 5 slots → blocker.
+        TeachingAssignment.objects.filter(school_class=klass).delete()
+        TeachingAssignment.objects.create(
+            subject=subject, teacher=teacher, school_class=klass,
+            weekly_hours=Decimal('20'),
+        )
+        report = analyze(school)
+        self.assertFalse(report.feasible_likely)
+        codes = [i.code for i in report.blockers]
+        self.assertIn('class_overload', codes)
+        self.assertIn('teacher_overload', codes)
+
+    def test_subject_day_blackout_overload_caught(self):
+        """Loading 5 weekly hours of a subject AND blacking out 4 of the 5
+        school days for it leaves only 1 day's worth of slots — blocker."""
+        from solver.feasibility import analyze
+        from datetime import time
+        school, klass, teacher, subject = _make_school_with_minimum_load()
+        # Extend slots so the only blocker is the blackout, not raw capacity.
+        for day in range(1, 6):
+            for period in range(2, 5):
+                TimeSlot.objects.get_or_create(
+                    school=school, day=day, period=period,
+                    defaults={'start_time': time(8, 0), 'end_time': time(8, 45)},
+                )
+        Constraint.objects.create(
+            school=school, name='no subject most days',
+            constraint_type='subject_day_blackout',
+            priority=Constraint.Priority.HARD,
+            school_class=klass, subject=subject,
+            parameters={'days': [1, 2, 3, 4]},  # only day 5 left
+        )
+        # Bump assignment hours past day-5's max-per-day cap (default 4).
+        TeachingAssignment.objects.filter(school_class=klass).delete()
+        TeachingAssignment.objects.create(
+            subject=subject, teacher=teacher, school_class=klass,
+            weekly_hours=Decimal('10'),
+        )
+        report = analyze(school)
+        codes = [i.code for i in report.blockers]
+        self.assertIn('blackout_overload', codes)
+
+
 class SubjectDayBlackoutTest(TestCase):
     """subject_day_blackout — forbid a (subject, day) for a class (or all
     classes). Verifies (a) the AI tool creates the constraint correctly and
