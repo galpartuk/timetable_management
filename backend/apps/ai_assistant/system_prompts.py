@@ -98,6 +98,8 @@ _MODULE_EXTRA = {
         '  • "הפסקת אוכל בשעה N" / "להשאיר את שעה N פנויה" → lunch_break (periods).\n'
         '  • "מקצוע X בשיעורים כפולים רצופים" → consecutive_pair (class_id + subject_id).\n'
         '  • "לא לשבץ בשעה האחרונה" → no_last_period (אופציונלי teacher/class/subject + periods).\n'
+        '  • "אין מקצוע X ביום Y לכיתה Z" / "לא ללמד אנגלית בימי שלישי לז1" → subject_day_blackout '
+        '(subject_id + days). לבקשה שכוללת שכבה שלמה: צור אילוץ נפרד לכל כיתה בשכבה (פאן-אאוט).\n'
         'priority=hard = חובה, soft = להעדיף ולמזער הפרות. ברירת מחדל hard.\n'
         'לפני יצירה — בדוק עם list_constraints אם כבר קיים אילוץ דומה. '
         'אם המשתמש מבקש לבטל התאמה — מצא אותה ב-list_constraints ומחק עם delete_constraint.\n'

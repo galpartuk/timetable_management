@@ -18,6 +18,7 @@ type Field =
   | { kind: 'class'; required?: boolean; allowAll?: boolean }
   | { kind: 'tag'; required?: boolean }
   | { kind: 'slots'; key: string; labelKey: string }
+  | { kind: 'days'; key: string; labelKey: string }
   | { kind: 'param'; key: string; labelKey: string; type: 'number' | 'periods' | 'day'; default: any };
 
 const DAY_LABELS = [
@@ -99,6 +100,16 @@ const TYPE_SCHEMAS: TypeSchema[] = [
     fields: [
       { kind: 'teacher', required: true },
       { kind: 'slots', key: 'unavailable', labelKey: 'שעות חסומות' },
+    ],
+  },
+  {
+    value: 'subject_day_blackout',
+    labelHe: 'חסימת מקצוע ביום',
+    description: 'אסור לשבץ את המקצוע בימים שנבחרו (לכיתה ספציפית או לכולן).',
+    fields: [
+      { kind: 'subject', required: true },
+      { kind: 'class', allowAll: true },
+      { kind: 'days', key: 'days', labelKey: 'ימים חסומים' },
     ],
   },
   {
@@ -380,6 +391,37 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
   const { t } = useTranslation();
   const allLabel = t('constraints.all');
 
+  if (field.kind === 'days') {
+    const selected: number[] = Array.isArray(form.parameters[field.key])
+      ? form.parameters[field.key]
+      : [];
+    const toggle = (d: number) => {
+      const next = selected.includes(d)
+        ? selected.filter((x) => x !== d)
+        : [...selected, d].sort((a, b) => a - b);
+      setForm({ ...form, parameters: { ...form.parameters, [field.key]: next } });
+    };
+    return (
+      <Box>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700', mb: 1 }}>
+          {field.labelKey}
+        </Typography>
+        <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', rowGap: 0.75 }}>
+          {DAY_LABELS.map((d) => (
+            <Chip
+              key={d.v}
+              label={d.l}
+              onClick={() => toggle(d.v)}
+              color={selected.includes(d.v) ? 'primary' : 'default'}
+              variant={selected.includes(d.v) ? 'filled' : 'outlined'}
+              sx={{ cursor: 'pointer' }}
+            />
+          ))}
+        </Stack>
+      </Box>
+    );
+  }
+
   if (field.kind === 'slots') {
     const slots: Array<{ day: number; period: number }> = Array.isArray(form.parameters[field.key])
       ? form.parameters[field.key]
@@ -602,6 +644,13 @@ function describeConstraint(
       }
       break;
     }
+    case 'subject_day_blackout': {
+      const days = Array.isArray(p.days) ? p.days : [];
+      if (days.length) {
+        parts.push('ימים חסומים: ' + days.map((d: number) => dayLabel(d)).join(', '));
+      }
+      break;
+    }
     case 'group_blocked_slot': {
       const slots = Array.isArray(p.slots) ? p.slots : [];
       if (slots.length) {
@@ -626,6 +675,10 @@ function isFormValid(schema: TypeSchema, form: any): boolean {
       const v = form.parameters[f.key];
       if (!Array.isArray(v) || v.length === 0) return false;
     }
+    if (f.kind === 'days') {
+      const v = form.parameters[f.key];
+      if (!Array.isArray(v) || v.length === 0) return false;
+    }
   }
   return true;
 }
@@ -635,6 +688,7 @@ function defaultParams(schema: TypeSchema): Record<string, any> {
   for (const f of schema.fields) {
     if (f.kind === 'param') out[f.key] = f.default;
     if (f.kind === 'slots') out[f.key] = [];
+    if (f.kind === 'days') out[f.key] = [];
   }
   return out;
 }
