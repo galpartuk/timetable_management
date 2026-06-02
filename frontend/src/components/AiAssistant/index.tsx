@@ -1,4 +1,4 @@
-import { Box, Drawer, Fab, FormControlLabel, IconButton, Menu, MenuItem, Switch, Tooltip, Typography } from '@mui/material';
+import { Box, Divider, Drawer, Fab, FormControlLabel, IconButton, Menu, MenuItem, Switch, Tooltip, Typography } from '@mui/material';
 import { useState } from 'react';
 import {
   AutoAwesome as SparkleIcon,
@@ -6,6 +6,7 @@ import {
   KeyboardCommandKey as CmdIcon,
   Settings as SettingsIcon,
   BoltOutlined as BoltIcon,
+  DeleteSweep as DeleteSweepIcon,
 } from '@mui/icons-material';
 import { ChatPanel } from './ChatPanel';
 import { useAiAssistant } from './AiAssistantContext';
@@ -33,7 +34,7 @@ const MODULE_TITLES: Record<string, string> = {
  * context via `useAiAssistantContext` and the panel reads it on send.
  */
 export default function AiAssistant() {
-  const { state: { ctx, isOpen, autoApprove }, close, open, setAutoApprove } = useAiAssistant();
+  const { state: { ctx, isOpen, autoApprove }, close, open, setAutoApprove, requestClear } = useAiAssistant();
   const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null);
   const title = MODULE_TITLES[ctx.module] ?? MODULE_TITLES.global;
 
@@ -167,6 +168,24 @@ export default function AiAssistant() {
                 sx={{ ml: 0, alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.25 } }}
               />
             </MenuItem>
+            <Divider />
+            <MenuItem
+              onClick={() => {
+                if (confirm('למחוק את היסטוריית השיחה? הפעולה אינה הפיכה.')) {
+                  requestClear();
+                  setSettingsAnchor(null);
+                }
+              }}
+              sx={{ color: 'error.main', gap: 1 }}
+            >
+              <DeleteSweepIcon fontSize="small" />
+              <Box>
+                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>מחק את היסטוריית השיחה</Typography>
+                <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
+                  השיחה נשמרת בדפדפן שלכם ועוברת ריענון. מחיקה תאפס את ההיסטוריה.
+                </Typography>
+              </Box>
+            </MenuItem>
           </Menu>
 
           {/* Banner when auto-approve is on, so the user is never surprised. */}
@@ -187,9 +206,9 @@ export default function AiAssistant() {
             </Box>
           )}
 
-          {/* Per-toggle remount so each open starts fresh; switch the key
-              if you'd rather persist history across closes. */}
-          <ChatPanel ctx={ctx} key={isOpen ? 'open' : 'closed'} />
+          {/* Mounted once so chat state survives drawer toggles. Persistence
+              across page reloads is handled by useAiAssistantChat (localStorage). */}
+          <ChatPanel ctx={ctx} />
         </Box>
       </Drawer>
     </>
