@@ -10,10 +10,11 @@ class SubjectSerializer(serializers.ModelSerializer):
 
 class TeacherTagSerializer(serializers.ModelSerializer):
     teacher_count = serializers.SerializerMethodField()
+    subject_name = serializers.CharField(source='subject.name_he', read_only=True, default=None)
 
     class Meta:
         model = TeacherTag
-        fields = ['id', 'school', 'name', 'color', 'teacher_count']
+        fields = ['id', 'school', 'name', 'color', 'kind', 'subject', 'subject_name', 'teacher_count']
 
     def get_teacher_count(self, obj):
         return obj.teachers.count()

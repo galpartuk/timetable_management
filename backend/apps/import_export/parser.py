@@ -659,26 +659,9 @@ def _canonicalize_teacher_name(raw_name: str) -> str:
     return s
 
 
-def _teacher_for(
-    school: School,
-    raw_name: str,
-    cache: dict[str, Teacher],
-    *,
-    subject_key: str = '',  # kept for call-site compatibility; ignored
-) -> Teacher | None:
-    """Resolve a raw teacher cell to a Teacher record, deduplicated by
-    canonical first name within the school.
-
-    Previously this function split the same first name across different
-    subject sheets — the assumption being that "מיטל-the-Arabic-teacher"
-    might be a different person from "מיטל-the-math-teacher". In practice
-    the source Excels use a distinct full name when there are genuinely
-    two people, so the split produced false duplicates (the same person
-    teaching homeroom AND a subject became two Teacher rows). We now
-    always merge by canonical first name. If a school really does have
-    two teachers sharing a first name, the Excel should write them with
-    a disambiguating last name in the cell (e.g., "מיטל א" / "מיטל ב").
-    """
+def _valid_canonical(raw_name: str) -> str | None:
+    """Canonicalize and reject non-name junk (empty, single non-alpha char,
+    pure numbers). Returns the canonical name or None."""
     canonical = _canonicalize_teacher_name(raw_name)
     if not canonical:
         return None
@@ -686,17 +669,145 @@ def _teacher_for(
         return None
     if re.fullmatch(r'\d+(?:\.\d+)?', canonical):
         return None
+    return canonical
+
+
+_HEB_LETTER = '[א-ת]'
+
+
+def _split_teacher_name(canonical: str) -> tuple[str, str]:
+    """Split a canonical name into (first, last). A trailing single Hebrew
+    letter is a disambiguator that stays part of the first name
+    ("מאיה ק" → ("מאיה ק", "")), not a surname."""
+    tokens = canonical.split()
+    if len(tokens) <= 1:
+        return canonical, ''
+    if re.fullmatch(_HEB_LETTER + "['׳]?", tokens[-1]):
+        return canonical, ''
+    return tokens[0], ' '.join(tokens[1:])
+
+
+def _full_name(teacher: Teacher) -> str:
+    return f'{teacher.first_name} {teacher.last_name}'.strip()
+
+
+def _build_existing_index(school: School) -> dict[str, list[Teacher]]:
+    """Index existing teachers by the first token of their name (splitting
+    legacy full-name-in-first_name rows the same way) so an incoming
+    first-name-only cell can find them."""
+    index: dict[str, list[Teacher]] = {}
+    for t in Teacher.objects.filter(school=school).order_by('id'):
+        key = _split_teacher_name(_full_name(t))[0]
+        index.setdefault(key, []).append(t)
+    return index
+
+
+def resolve_teacher_match(canonical: str, existing_index: dict[str, list[Teacher]]) -> dict:
+    """Decide whether a canonical incoming name matches an existing teacher,
+    is new, or is ambiguous. Returns {status, canonical, first, last,
+    candidates:[{id, display_name}], suggested} where suggested is a teacher
+    id or 'new'. Shared by the dry-run preview and the commit path."""
+    first, last = _split_teacher_name(canonical)
+    candidates = existing_index.get(first, [])
+    cand_list = [{'id': c.id, 'display_name': str(c)} for c in candidates]
+
+    # Exact full-name match (same first token + same last name).
+    for c in candidates:
+        cf, cl = _split_teacher_name(_full_name(c))
+        if cf == first and cl == last:
+            return {'status': 'matched', 'canonical': canonical, 'first': first,
+                    'last': last, 'candidates': cand_list, 'suggested': c.id}
+
+    if not candidates:
+        return {'status': 'new', 'canonical': canonical, 'first': first,
+                'last': last, 'candidates': [], 'suggested': 'new'}
+
+    if len(candidates) == 1:
+        only = candidates[0]
+        _, ol = _split_teacher_name(_full_name(only))
+        if not last and not ol:
+            # both bare first names, identical → same person
+            return {'status': 'matched', 'canonical': canonical, 'first': first,
+                    'last': last, 'candidates': cand_list, 'suggested': only.id}
+        # one side carries a last name, the other doesn't → likely same, ask
+        return {'status': 'ambiguous', 'canonical': canonical, 'first': first,
+                'last': last, 'candidates': cand_list, 'suggested': only.id}
+
+    # several existing teachers share the first token → never silently pick one
+    return {'status': 'ambiguous', 'canonical': canonical, 'first': first,
+            'last': last, 'candidates': cand_list, 'suggested': 'new'}
+
+
+def _teacher_for(
+    school: School,
+    raw_name: str,
+    cache: dict[str, Teacher],
+    *,
+    subject_key: str = '',  # kept for call-site compatibility; ignored
+    overrides: dict | None = None,
+    existing_index: dict[str, list[Teacher]] | None = None,
+    warnings: list[str] | None = None,
+) -> Teacher | None:
+    """Resolve a raw teacher cell to a Teacher, matching on first + last name.
+
+    Order: an explicit user override (keyed by canonical name) wins; otherwise
+    ``resolve_teacher_match`` decides match / new / ambiguous and we apply its
+    suggested default (merge a single candidate, else create new). Ambiguous
+    names are surfaced in the import review step so the user can override before
+    commit. New full-name cells store a split first/last; merging a full name
+    into a bare first-name record backfills the empty last name (never
+    overwrites, never touches legacy full-name-in-first_name rows).
+    """
+    canonical = _valid_canonical(raw_name)
+    if not canonical:
+        return None
 
     cached = cache.get(canonical)
     if cached:
         return cached
 
-    existing = Teacher.objects.filter(school=school, first_name=canonical).order_by('id').first()
-    if existing:
-        cache[canonical] = existing
-        return existing
+    if existing_index is None:
+        existing_index = _build_existing_index(school)
+    first, last = _split_teacher_name(canonical)
 
-    t = Teacher.objects.create(school=school, first_name=canonical, last_name='')
+    # 1) explicit user override: teacher id, 'new', or an alias to another
+    #    incoming canonical name (for merging two names that are both new).
+    if overrides and canonical in overrides:
+        val = overrides[canonical]
+        if val == 'new':
+            t = Teacher.objects.create(school=school, first_name=first, last_name=last)
+            cache[canonical] = t
+            return t
+        if isinstance(val, int) or (isinstance(val, str) and val.isdigit()):
+            t = Teacher.objects.filter(id=int(val), school=school).first()
+            if t:
+                cache[canonical] = t
+                return t
+            if warnings is not None:
+                warnings.append(f'בחירת מורה לא תקפה עבור "{canonical}" — שובץ אוטומטית')
+        elif isinstance(val, str) and val and val != canonical:
+            alias = cache.get(val) or _teacher_for(
+                school, val, cache, overrides=overrides,
+                existing_index=existing_index, warnings=warnings,
+            )
+            if alias:
+                cache[canonical] = alias
+                return alias
+        # bad override → fall through to auto resolution
+
+    # 2) auto resolution
+    res = resolve_teacher_match(canonical, existing_index)
+    target = res['suggested']
+    if target != 'new':
+        t = Teacher.objects.filter(id=target, school=school).first()
+        if t:
+            if last and not t.last_name and t.first_name == first:
+                t.last_name = last
+                t.save(update_fields=['last_name'])
+            cache[canonical] = t
+            return t
+
+    t = Teacher.objects.create(school=school, first_name=first, last_name=last)
     cache[canonical] = t
     return t
 
@@ -713,7 +824,10 @@ class ApplyResult:
     errors: list[str] = field(default_factory=list)
 
 
-def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False) -> ApplyResult:
+def apply(
+    parsed: ParsedWorkbook, school: School, *,
+    wipe_existing: bool = False, teacher_overrides: dict | None = None,
+) -> ApplyResult:
     """Commit a ParsedWorkbook to the database. Returns a structured summary
     of what was inserted/updated.
 
@@ -723,7 +837,12 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
 
     When ``wipe_existing`` is True, all teacher/subject/assignment/role
     records for the school are deleted before re-importing — useful when
-    the user wants to fully replace prior data."""
+    the user wants to fully replace prior data.
+
+    ``teacher_overrides`` maps a canonical incoming teacher name to the
+    user's identity decision from the import review step: an existing
+    Teacher id, the string ``'new'``, or another incoming canonical name to
+    merge with. Absent → automatic first+last matching."""
 
     result = ApplyResult()
     grades = _ensure_grades(school)
@@ -744,6 +863,9 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
             # survive. Subjects and Teachers re-populate from the Excel.
             Subject.objects.filter(school=school).delete()
             Teacher.objects.filter(school=school).delete()
+
+        # Index existing teachers once (post-wipe) for first+last matching.
+        existing_index = _build_existing_index(school)
 
         # First pass: resolve every (grade, number) referenced into a SchoolClass.
         # We collect them and bulk-fetch to avoid N queries per row.
@@ -789,10 +911,10 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
                 )
                 subject_cache[row.subject] = subject
 
-            # Scope teacher disambiguation by subject — "מיטל" in the
-            # math sheet vs Arabic sheet refers to different people.
             teacher = _teacher_for(
                 school, row.teacher, teacher_cache, subject_key=row.subject,
+                overrides=teacher_overrides, existing_index=existing_index,
+                warnings=result.warnings,
             )
 
             # Resolve all classes for this row.
@@ -858,6 +980,8 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
                 continue
             teacher = _teacher_for(
                 school, row.teacher, teacher_cache, subject_key=row.subject,
+                overrides=teacher_overrides, existing_index=existing_index,
+                warnings=result.warnings,
             )
             if not teacher:
                 continue
@@ -872,7 +996,11 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
         # empty subject_key — letting the resolver pick the first
         # existing Teacher with that name (creating one if none).
         for rrow in parsed.role_rows:
-            teacher = _teacher_for(school, rrow.teacher, teacher_cache) if rrow.teacher else None
+            teacher = _teacher_for(
+                school, rrow.teacher, teacher_cache,
+                overrides=teacher_overrides, existing_index=existing_index,
+                warnings=result.warnings,
+            ) if rrow.teacher else None
             TeacherRole.objects.update_or_create(
                 school=school,
                 role_title=rrow.role_title,
@@ -907,6 +1035,12 @@ def apply(parsed: ParsedWorkbook, school: School, *, wipe_existing: bool = False
             if new_max != teacher.max_weekly_hours:
                 teacher.max_weekly_hours = max(new_max, 1)
                 teacher.save(update_fields=['max_weekly_hours'])
+
+        # Auto-categorize: department tag per primary subject + coordinator
+        # tags from the roles sheet. Idempotent and re-runnable; fills in
+        # departments only where empty so manual moves survive a re-import.
+        from apps.subjects.services.tagging import sync_all_tags
+        sync_all_tags(school)
 
     result.warnings.extend(parsed.warnings)
     result.errors.extend(parsed.errors)

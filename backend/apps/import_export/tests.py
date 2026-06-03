@@ -203,3 +203,144 @@ class EndToEndImportTests(TestCase):
 
         self.assertEqual(first_count, second_count)
         self.assertEqual(result2.assignments_created, 0)
+
+
+class NormalizedExportTests(TestCase):
+    """Phase 2 verification sheets: teacher summary + feasibility diagnostics."""
+
+    def test_teacher_summary_and_diagnostics_flag_overload(self):
+        from datetime import time
+        from apps.school.models import Grade, School, SchoolClass, TimeSlot
+        from apps.subjects.models import Subject, Teacher, TeachingAssignment
+        from apps.import_export.exporter import build_workbook
+
+        school = School.objects.create(name='בדיקת אבחון')
+        grade = Grade.objects.create(school=school, name='ט', level=9)
+        cls = SchoolClass.objects.create(grade=grade, number=4)
+        # A four-slot week.
+        for p in range(1, 5):
+            TimeSlot.objects.create(
+                school=school, day=1, period=p,
+                start_time=time(8, 0), end_time=time(8, 45),
+            )
+        subj = Subject.objects.create(school=school, name_he='מתמטיקה')
+        teacher = Teacher.objects.create(school=school, first_name='דנה')
+        # 6 lessons but only 4 slots -> guaranteed class overload.
+        TeachingAssignment.objects.create(
+            subject=subj, teacher=teacher, school_class=cls, weekly_hours=Decimal('6'),
+        )
+
+        wb = build_workbook({'school_id': school.id, 'sheets': ['teacher_summary', 'diagnostics']})
+        self.assertIn('סיכום מורים', wb.sheetnames)
+        self.assertIn('אבחון', wb.sheetnames)
+
+        summary_rows = list(wb['סיכום מורים'].iter_rows(values_only=True))
+        self.assertGreaterEqual(len(summary_rows), 2)  # header + ≥1 data row
+        self.assertIn('דנה', summary_rows[1])
+
+        diag_codes = [r[1] for r in wb['אבחון'].iter_rows(values_only=True)]
+        self.assertIn('class_overload', diag_codes)
+
+
+class TeacherNameSplitTests(TestCase):
+    def test_split(self):
+        from apps.import_export.parser import _split_teacher_name
+        self.assertEqual(_split_teacher_name('אורית'), ('אורית', ''))
+        self.assertEqual(_split_teacher_name('אורית יחזקאל'), ('אורית', 'יחזקאל'))
+        self.assertEqual(_split_teacher_name('מאיה ק'), ('מאיה ק', ''))  # single-letter suffix kept
+        self.assertEqual(_split_teacher_name('רינת שוורץ'), ('רינת', 'שוורץ'))
+
+
+class TeacherResolveTests(TestCase):
+    def setUp(self):
+        self.school = School.objects.create(name='בדיקת זיהוי')
+
+    def _idx(self):
+        from apps.import_export.parser import _build_existing_index
+        return _build_existing_index(self.school)
+
+    def _resolve(self, name):
+        from apps.import_export.parser import resolve_teacher_match
+        return resolve_teacher_match(name, self._idx())
+
+    def test_exact_match(self):
+        t = Teacher.objects.create(school=self.school, first_name='אורית', last_name='יחזקאל')
+        res = self._resolve('אורית יחזקאל')
+        self.assertEqual(res['status'], 'matched')
+        self.assertEqual(res['suggested'], t.id)
+
+    def test_first_only_one_full_candidate_is_ambiguous_suggest_merge(self):
+        t = Teacher.objects.create(school=self.school, first_name='אורית', last_name='יחזקאל')
+        res = self._resolve('אורית')
+        self.assertEqual(res['status'], 'ambiguous')
+        self.assertEqual(res['suggested'], t.id)
+
+    def test_two_candidates_ambiguous_suggest_new(self):
+        Teacher.objects.create(school=self.school, first_name='אורית', last_name='יחזקאל')
+        Teacher.objects.create(school=self.school, first_name='אורית', last_name='כהן')
+        res = self._resolve('אורית')
+        self.assertEqual(res['status'], 'ambiguous')
+        self.assertEqual(res['suggested'], 'new')
+
+    def test_no_match_is_new(self):
+        self.assertEqual(self._resolve('יוסי')['status'], 'new')
+
+    def test_legacy_full_name_in_first_name_indexes_and_matches(self):
+        t = Teacher.objects.create(school=self.school, first_name='אורית יחזקאל', last_name='')
+        res = self._resolve('אורית')
+        self.assertEqual(res['suggested'], t.id)
+        self.assertEqual(res['status'], 'ambiguous')
+
+
+class TeacherForOverrideTests(TestCase):
+    def setUp(self):
+        self.school = School.objects.create(name='בדיקת עקיפה')
+
+    def _call(self, name, **kw):
+        from apps.import_export.parser import _teacher_for, _build_existing_index
+        kw.setdefault('existing_index', _build_existing_index(self.school))
+        return _teacher_for(self.school, name, {}, **kw)
+
+    def test_override_to_existing_id(self):
+        t = Teacher.objects.create(school=self.school, first_name='אורית', last_name='יחזקאל')
+        got = self._call('אורית', overrides={'אורית': t.id})
+        self.assertEqual(got.id, t.id)
+        self.assertEqual(Teacher.objects.filter(school=self.school).count(), 1)
+
+    def test_override_new_splits_name(self):
+        Teacher.objects.create(school=self.school, first_name='אורית', last_name='יחזקאל')
+        got = self._call('אורית כהן', overrides={'אורית כהן': 'new'})
+        self.assertEqual((got.first_name, got.last_name), ('אורית', 'כהן'))
+        self.assertEqual(Teacher.objects.filter(school=self.school).count(), 2)
+
+    def test_auto_merge_backfills_empty_last_name(self):
+        t = Teacher.objects.create(school=self.school, first_name='אורית', last_name='')
+        got = self._call('אורית יחזקאל')
+        self.assertEqual(got.id, t.id)
+        got.refresh_from_db()
+        self.assertEqual(got.last_name, 'יחזקאל')
+
+    def test_bad_override_falls_back_to_auto(self):
+        warns = []
+        got = self._call('יוסי', overrides={'יוסי': 9999}, warnings=warns)
+        self.assertIsNotNone(got)
+        self.assertTrue(warns)
+
+
+class ComputeTeacherResolutionsTests(TestCase):
+    def test_ambiguous_surfaced(self):
+        import types
+        from apps.import_export.views import _compute_teacher_resolutions
+        school = School.objects.create(name='בדיקת תצוגה')
+        Teacher.objects.create(school=school, first_name='אורית', last_name='יחזקאל')
+        parsed = types.SimpleNamespace(
+            assignment_rows=[types.SimpleNamespace(teacher='אורית')],
+            role_rows=[],
+        )
+        out = _compute_teacher_resolutions(parsed, school)
+        self.assertEqual(out['ambiguous_count'], 1)
+        entry = out['ambiguous'][0]
+        self.assertEqual(entry['incoming'], 'אורית')
+        # choices = the candidate + a "new" option
+        values = [c['value'] for c in entry['choices']]
+        self.assertIn('new', values)

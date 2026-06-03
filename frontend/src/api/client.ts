@@ -111,6 +111,13 @@ export const getTeacherTags = (schoolId?: number) =>
 export const createTeacherTag = (data: any) => api.post('/teacher-tags/', data);
 export const updateTeacherTag = (id: number, data: any) => api.put(`/teacher-tags/${id}/`, data);
 export const deleteTeacherTag = (id: number) => api.delete(`/teacher-tags/${id}/`);
+// Replace a tag's whole member set in one call.
+export const setTagMembers = (id: number, teacherIds: number[]) =>
+  api.post(`/teacher-tags/${id}/set-members/`, { teacher_ids: teacherIds });
+// Set (or clear, with day_off=null) the day off for many teachers at once —
+// target either a whole tag or an explicit id list.
+export const bulkSetDayOff = (payload: { tag_id?: number; teacher_ids?: number[]; day_off: number | null }) =>
+  api.post('/teachers/bulk-day-off/', payload);
 
 // Assignments
 export const getAssignments = (params?: any) => api.get('/assignments/', { params });
@@ -301,6 +308,18 @@ export interface ImportPreview {
       new_hours: number;
     }>;
   };
+  teacher_resolutions?: {
+    ambiguous: Array<{
+      incoming: string;
+      first: string;
+      last: string;
+      candidates: Array<{ id: number; display_name: string }>;
+      suggested: number | 'new';
+      choices: Array<{ value: number | 'new'; label: string }>;
+    }>;
+    ambiguous_count: number;
+    auto_matched_count: number;
+  };
 }
 
 export interface ImportResponse {
@@ -320,12 +339,16 @@ export interface ImportResponse {
 export const uploadExcel = (file: File, schoolId: number, opts: {
   dryRun?: boolean;
   wipeExisting?: boolean;
+  teacherOverrides?: Record<string, number | 'new'>;
 } = {}) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('school_id', schoolId.toString());
   if (opts.dryRun) formData.append('dry_run', 'true');
   if (opts.wipeExisting) formData.append('wipe_existing', 'true');
+  if (opts.teacherOverrides && Object.keys(opts.teacherOverrides).length) {
+    formData.append('teacher_overrides', JSON.stringify(opts.teacherOverrides));
+  }
   return api.post<ImportResponse>('/import/upload/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });

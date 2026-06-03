@@ -4,12 +4,13 @@ import {
   Box, Typography, Card, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, IconButton, Button,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Select,
-  Stack, Avatar, Chip, Menu,
+  Stack, Avatar, Chip, Menu, Checkbox, Tooltip,
 } from '@mui/material';
-import { Add, Edit, Delete, UploadFile, People as PeopleIcon, LocalOffer as TagIcon } from '@mui/icons-material';
+import { Add, Edit, Delete, UploadFile, People as PeopleIcon, LocalOffer as TagIcon, Groups } from '@mui/icons-material';
 import {
   getTeachers, createTeacher, updateTeacher, deleteTeacher,
-  getTeacherTags,
+  getTeacherTags, createTeacherTag, updateTeacherTag, deleteTeacherTag,
+  setTagMembers, bulkSetDayOff,
   getSubjects, createSubject, updateSubject, deleteSubject,
   getClasses, getAssignments, uploadDaysOff,
 } from '../../api/client';
@@ -22,10 +23,11 @@ const DAY_OPTIONS = [
   { value: 5, key: 'thursday' },
 ];
 
-type TabKey = 'teachers' | 'subjects' | 'classes' | 'assignments';
+type TabKey = 'teachers' | 'tags' | 'subjects' | 'classes' | 'assignments';
 
 const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'teachers', labelKey: 'data.teachers' },
+  { key: 'tags', labelKey: 'data.tags' },
   { key: 'subjects', labelKey: 'data.subjects' },
   { key: 'classes', labelKey: 'data.classes' },
   { key: 'assignments', labelKey: 'data.assignments' },
@@ -108,8 +110,36 @@ export default function DataEntry() {
     }
   };
 
+  const handleSaveTag = async (data: any) => {
+    if (data.id) await updateTeacherTag(data.id, data);
+    else await createTeacherTag({ name: data.name, color: data.color, kind: 'custom', school: 1 });
+    setEditDialog(null);
+    loadData();
+  };
+
+  const handleDeleteTag = async (id: number) => {
+    if (confirm(t('data.confirmDelete'))) {
+      await deleteTeacherTag(id);
+      loadData();
+    }
+  };
+
+  // Set (or clear) the day off for every teacher carrying this tag.
+  const handleTagDayOff = async (tag: any, dayOff: number | null) => {
+    const res = await bulkSetDayOff({ tag_id: tag.id, day_off: dayOff });
+    alert(`${res.data.updated ?? 0} ${t('daysOff.updated')}`);
+    loadData();
+  };
+
+  const handleSaveMembers = async (tagId: number, teacherIds: number[]) => {
+    await setTagMembers(tagId, teacherIds);
+    setEditDialog(null);
+    loadData();
+  };
+
   const counts: Record<TabKey, number> = {
     teachers: teachers.length,
+    tags: tags.length,
     subjects: subjects.length,
     classes: classes.length,
     assignments: assignments.length,
@@ -315,6 +345,18 @@ export default function DataEntry() {
         </>
       )}
 
+      {tab === 'tags' && (
+        <TagsTab
+          tags={tags}
+          isRtl={isRtl}
+          onAdd={() => setEditDialog({ type: 'tag', data: { name: '', color: '#6366F1' } })}
+          onEdit={(tag) => setEditDialog({ type: 'tag', data: tag })}
+          onDelete={handleDeleteTag}
+          onDayOff={handleTagDayOff}
+          onManageMembers={(tag) => setEditDialog({ type: 'tagMembers', data: tag })}
+        />
+      )}
+
       {tab === 'subjects' && (
         <>
           <Box sx={{ mb: 2 }}>
@@ -512,7 +554,231 @@ export default function DataEntry() {
           onClose={() => setEditDialog(null)}
         />
       )}
+      {editDialog?.type === 'tag' && (
+        <TagDialog
+          data={editDialog.data}
+          onSave={handleSaveTag}
+          onClose={() => setEditDialog(null)}
+        />
+      )}
+      {editDialog?.type === 'tagMembers' && (
+        <TagMembersDialog
+          tag={editDialog.data}
+          teachers={teachers}
+          onSave={(ids) => handleSaveMembers(editDialog.data.id, ids)}
+          onClose={() => setEditDialog(null)}
+        />
+      )}
     </Box>
+  );
+}
+
+const TAG_KIND_META: Record<string, { he: string; en: string; color: string }> = {
+  department: { he: 'מחלקה', en: 'Department', color: '#2563EB' },
+  coordinator: { he: 'ריכוז', en: 'Coordinator', color: '#7C3AED' },
+  custom: { he: 'מותאם', en: 'Custom', color: '#64748B' },
+};
+
+function TagsTab({ tags, isRtl, onAdd, onEdit, onDelete, onDayOff, onManageMembers }: {
+  tags: any[];
+  isRtl: boolean;
+  onAdd: () => void;
+  onEdit: (tag: any) => void;
+  onDelete: (id: number) => void;
+  onDayOff: (tag: any, dayOff: number | null) => void;
+  onManageMembers: (tag: any) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Button variant="contained" startIcon={<Add />} onClick={onAdd}>
+          {t('data.add')} {isRtl ? 'תגית' : 'Tag'}
+        </Button>
+        <Typography sx={{ color: 'grey.600', fontSize: 13 }}>
+          {isRtl
+            ? 'מחלקות וריכוזים נוצרים אוטומטית מהייבוא וניתנים לעריכה. בחרו יום חופש לכל חברי תגית בלחיצה אחת.'
+            : 'Departments and coordinators are auto-created on import and editable. Set a day off for all members of a tag in one click.'}
+        </Typography>
+      </Stack>
+      <Card>
+        <TableContainer>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>{isRtl ? 'תגית' : 'Tag'}</TableCell>
+                <TableCell>{isRtl ? 'סוג' : 'Kind'}</TableCell>
+                <TableCell>{isRtl ? 'חברים' : 'Members'}</TableCell>
+                <TableCell>{isRtl ? 'יום חופש לכל החברים' : 'Day off for all members'}</TableCell>
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {tags.map((tag) => {
+                const meta = TAG_KIND_META[tag.kind] ?? TAG_KIND_META.custom;
+                return (
+                  <TableRow key={tag.id}>
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={tag.name}
+                        sx={{ bgcolor: tag.color + '22', color: tag.color, fontWeight: 600 }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Box
+                        sx={{
+                          display: 'inline-block', px: 1, py: 0.25, borderRadius: 1,
+                          fontSize: 11, fontWeight: 700,
+                          bgcolor: meta.color + '18', color: meta.color,
+                        }}
+                      >
+                        {isRtl ? meta.he : meta.en}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography className="tabular-nums" sx={{ fontWeight: 600 }}>
+                        {tag.teacher_count ?? 0}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        size="small"
+                        value=""
+                        displayEmpty
+                        onChange={(e) => onDayOff(tag, e.target.value === '' ? null : Number(e.target.value))}
+                        sx={{ minWidth: 150 }}
+                        renderValue={() => (isRtl ? 'בחרו יום…' : 'Pick a day…')}
+                      >
+                        <MenuItem value="">{isRtl ? 'ללא יום חופש' : 'Clear day off'}</MenuItem>
+                        {DAY_OPTIONS.map((d) => (
+                          <MenuItem key={d.value} value={d.value}>{t(`days.${d.key}`)}</MenuItem>
+                        ))}
+                      </Select>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+                        <Tooltip title={isRtl ? 'נהל חברים' : 'Manage members'}>
+                          <IconButton size="small" onClick={() => onManageMembers(tag)}>
+                            <Groups fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <IconButton size="small" onClick={() => onEdit(tag)}>
+                          <Edit fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => onDelete(tag.id)}
+                          sx={{ color: 'grey.500', '&:hover': { color: 'error.main' } }}
+                        >
+                          <Delete fontSize="small" />
+                        </IconButton>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {tags.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} sx={{ borderBottom: 0 }}>
+                    <EmptyTable
+                      icon={<TagIcon />}
+                      title={isRtl ? 'אין תגיות עדיין' : 'No tags yet'}
+                      hint={isRtl ? 'ייבאו מאקסל כדי ליצור מחלקות אוטומטית, או הוסיפו תגית' : 'Import from Excel to auto-create departments, or add a tag'}
+                    />
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Card>
+    </>
+  );
+}
+
+function TagDialog({ data, onSave, onClose }: { data: any; onSave: (d: any) => void; onClose: () => void }) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const [form, setForm] = useState(data);
+  const isAuto = form.kind && form.kind !== 'custom';
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>{data.id ? t('data.edit') : t('data.add')} {isRtl ? 'תגית' : 'Tag'}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField
+            fullWidth label={isRtl ? 'שם' : 'Name'} value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+          {isAuto && (
+            <Typography variant="caption" sx={{ color: 'grey.600' }}>
+              {isRtl
+                ? 'תגית זו נוצרה אוטומטית מהייבוא. שינוי השם או הצבע יישמרו, אך הסוג יישאר.'
+                : 'This tag was auto-created on import. Renaming/recoloring is saved; its kind stays.'}
+            </Typography>
+          )}
+          <Box>
+            <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700', mb: 1 }}>
+              {isRtl ? 'צבע' : 'Color'}
+            </Typography>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+              <Box
+                component="input" type="color" value={form.color}
+                onChange={(e: any) => setForm({ ...form, color: e.target.value })}
+                sx={{ width: 56, height: 40, padding: 0, border: '1px solid', borderColor: 'divider', borderRadius: 1.5, cursor: 'pointer', background: 'transparent' }}
+              />
+              <TextField
+                size="small" value={form.color}
+                onChange={(e) => setForm({ ...form, color: e.target.value })}
+                sx={{ flex: 1, '& input': { fontFamily: 'monospace' } }}
+              />
+            </Stack>
+          </Box>
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} variant="text">{t('data.cancel')}</Button>
+        <Button variant="contained" onClick={() => onSave(form)} disabled={!form.name?.trim()}>{t('data.save')}</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function TagMembersDialog({ tag, teachers, onSave, onClose }: {
+  tag: any; teachers: any[]; onSave: (ids: number[]) => void; onClose: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const [selected, setSelected] = useState<number[]>(
+    () => teachers.filter((tc) => (tc.tags ?? []).includes(tag.id)).map((tc) => tc.id),
+  );
+  const toggle = (id: number) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>
+        {isRtl ? 'חברי התגית' : 'Tag members'}: {tag.name}
+      </DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={0.5}>
+          {teachers.map((tc) => (
+            <Box
+              key={tc.id}
+              onClick={() => toggle(tc.id)}
+              sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5, borderRadius: 1, cursor: 'pointer', '&:hover': { bgcolor: 'grey.50' } }}
+            >
+              <Checkbox size="small" checked={selected.includes(tc.id)} />
+              <Typography sx={{ fontSize: 14 }}>{tc.first_name} {tc.last_name}</Typography>
+            </Box>
+          ))}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} variant="text">{t('data.cancel')}</Button>
+        <Button variant="contained" onClick={() => onSave(selected)}>{t('data.save')}</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
