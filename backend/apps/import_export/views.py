@@ -41,8 +41,8 @@ def _diff_against_db(parsed, school) -> dict:
     from apps.subjects.models import Teacher, Subject, TeachingAssignment
     from apps.school.models import SchoolClass
 
-    db_teachers = set(Teacher.objects.filter(school=school)
-                      .values_list('first_name', flat=True))
+    from .parser import _valid_canonical, _build_existing_index, resolve_teacher_match
+
     db_subjects = set(Subject.objects.filter(school=school)
                       .values_list('name_he', flat=True))
     db_class_keys = set(
@@ -50,15 +50,35 @@ def _diff_against_db(parsed, school) -> dict:
         .values_list('grade__name', 'number')
     )
 
-    import_teachers: set[str] = set()
     import_subjects: set[str] = set()
     import_class_keys: set[tuple[str, int]] = set()
+    import_canon: set[str] = set()
     for r in parsed.assignment_rows:
-        if r.teacher:
-            import_teachers.add(r.teacher.strip())
+        c = _valid_canonical(r.teacher) if r.teacher else None
+        if c:
+            import_canon.add(c)
         import_subjects.add(r.subject)
         for g, n in r.classes:
             import_class_keys.add((g, n))
+    for rr in parsed.role_rows:
+        c = _valid_canonical(rr.teacher) if rr.teacher else None
+        if c:
+            import_canon.add(c)
+
+    # New vs matched teachers via the same first+last resolver used on commit,
+    # so the counts match what the import will actually do.
+    existing_index = _build_existing_index(school)
+    matched_ids: set[int] = set()
+    new_teachers: list[str] = []
+    for c in sorted(import_canon):
+        res = resolve_teacher_match(c, existing_index)
+        if res['status'] == 'new':
+            new_teachers.append(c)
+        elif res['suggested'] != 'new':
+            matched_ids.add(res['suggested'])
+    removed_teachers = sorted(
+        str(t) for t in Teacher.objects.filter(school=school) if t.id not in matched_ids
+    )
 
     # Existing assignments keyed by (sheet, row) so we can compare hours.
     db_hours_by_source = {
@@ -88,16 +108,63 @@ def _diff_against_db(parsed, school) -> dict:
     stale_rows = [k for k in db_hours_by_source if k not in new_rows_seen]
 
     return {
-        'new_teachers': sorted(import_teachers - db_teachers)[:50],
-        'new_teachers_count': len(import_teachers - db_teachers),
-        'removed_teachers': sorted(db_teachers - import_teachers)[:50],
-        'removed_teachers_count': len(db_teachers - import_teachers),
+        'new_teachers': new_teachers[:50],
+        'new_teachers_count': len(new_teachers),
+        'removed_teachers': removed_teachers[:50],
+        'removed_teachers_count': len(removed_teachers),
         'new_subjects': sorted(import_subjects - db_subjects)[:30],
         'new_classes': sorted([f'{g}{n}' for (g, n) in import_class_keys - db_class_keys])[:30],
         'new_rows_count': len(new_rows),
         'stale_rows_count': len(stale_rows),
         'hours_changes_count': len(hours_changes),
         'hours_changes': hours_changes[:30],
+    }
+
+
+def _compute_teacher_resolutions(parsed, school) -> dict:
+    """Identify incoming teacher names whose identity is ambiguous (could be an
+    existing teacher OR a new person) so the import review step can ask the
+    user. Names that match cleanly or are clearly new are resolved silently.
+
+    Returns ``{ambiguous: [{incoming, first, last, candidates, suggested,
+    choices}], ambiguous_count, auto_matched_count}``. ``choices`` carries the
+    radio options (each candidate id + a 'new' option); the override map sent
+    back on commit is ``{incoming_name: id | 'new'}``.
+    """
+    from .parser import _valid_canonical, _build_existing_index, resolve_teacher_match
+
+    existing_index = _build_existing_index(school)
+    seen: set[str] = set()
+    canon_names: list[str] = []
+    for r in list(parsed.assignment_rows) + list(parsed.role_rows):
+        raw = getattr(r, 'teacher', None)
+        c = _valid_canonical(raw) if raw else None
+        if c and c not in seen:
+            seen.add(c)
+            canon_names.append(c)
+
+    ambiguous = []
+    auto_matched = 0
+    for c in canon_names:
+        res = resolve_teacher_match(c, existing_index)
+        if res['status'] == 'ambiguous':
+            choices = [
+                {'value': cand['id'], 'label': f"מיזוג עם {cand['display_name']}"}
+                for cand in res['candidates']
+            ]
+            choices.append({'value': 'new', 'label': 'צור מורה חדש'})
+            ambiguous.append({
+                'incoming': c, 'first': res['first'], 'last': res['last'],
+                'candidates': res['candidates'], 'suggested': res['suggested'],
+                'choices': choices,
+            })
+        elif res['status'] == 'matched':
+            auto_matched += 1
+
+    return {
+        'ambiguous': ambiguous,
+        'ambiguous_count': len(ambiguous),
+        'auto_matched_count': auto_matched,
     }
 
 
@@ -160,6 +227,15 @@ def upload_excel(request):
     school_id = request.data.get('school_id')
     dry_run = (request.data.get('dry_run') or '').lower() == 'true'
     wipe = (request.data.get('wipe_existing') or '').lower() == 'true'
+    # User identity decisions from the review step: {canonical_name: id | 'new'}.
+    overrides_raw = request.data.get('teacher_overrides')
+    teacher_overrides = None
+    if overrides_raw:
+        import json
+        try:
+            teacher_overrides = json.loads(overrides_raw)
+        except (ValueError, TypeError):
+            teacher_overrides = None
 
     if not file:
         return Response({'error': 'לא נבחר קובץ'}, status=status.HTTP_400_BAD_REQUEST)
@@ -186,6 +262,7 @@ def upload_excel(request):
         parsed = analyze(file, file_name=file.name)
         preview = _summarize_parsed(parsed)
         preview['diff'] = _diff_against_db(parsed, school)
+        preview['teacher_resolutions'] = _compute_teacher_resolutions(parsed, school)
         import_log.preview_data = preview
         import_log.warnings = parsed.warnings
         import_log.errors = parsed.errors
@@ -201,7 +278,7 @@ def upload_excel(request):
             })
 
         # Phase 2: commit.
-        result = apply_parsed(parsed, school, wipe_existing=wipe)
+        result = apply_parsed(parsed, school, wipe_existing=wipe, teacher_overrides=teacher_overrides)
         import_log.subjects_imported = result.subjects_created
         import_log.teachers_imported = result.teachers_created
         import_log.classes_imported = result.classes_created

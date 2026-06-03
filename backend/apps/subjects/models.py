@@ -27,14 +27,35 @@ class Subject(models.Model):
 
 
 class TeacherTag(models.Model):
-    """A user-defined label that groups teachers, e.g. "6th-grade staff",
-    "math department". Used by Constraint(GROUP_BLOCKED_SLOT) so an admin
-    can say "everyone in the math department is in a meeting Tuesday at
-    period 1" and the solver leaves those slots empty for all of them."""
+    """A label that groups teachers, e.g. "6th-grade staff", "math department".
+    Used by Constraint(GROUP_BLOCKED_SLOT) so an admin can say "everyone in the
+    math department is in a meeting Tuesday at period 1" and the solver leaves
+    those slots empty for all of them.
+
+    `kind` distinguishes auto-generated tags from hand-made ones:
+      • department  — one per subject; a teacher's auto tag is their primary
+        (most-hours) subject. Re-import only fills it in when empty, so manual
+        moves survive.
+      • coordinator — derived from ריכוז/רכז rows in the roles sheet.
+      • custom      — created by the user; never touched by the importer.
+    Auto tags carry a `subject` FK so "all math teachers" is unambiguous; custom
+    tags leave it null."""
+
+    class Kind(models.TextChoices):
+        DEPARTMENT = 'department', 'מחלקה'
+        COORDINATOR = 'coordinator', 'ריכוז'
+        CUSTOM = 'custom', 'מותאם אישית'
 
     school = models.ForeignKey('school.School', on_delete=models.CASCADE, related_name='teacher_tags')
     name = models.CharField(max_length=80, verbose_name='שם תגית')
     color = models.CharField(max_length=7, default='#6366F1', verbose_name='צבע')
+    kind = models.CharField(
+        max_length=20, choices=Kind.choices, default=Kind.CUSTOM, verbose_name='סוג תגית',
+    )
+    subject = models.ForeignKey(
+        Subject, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='teacher_tags', verbose_name='מקצוע',
+    )
 
     class Meta:
         verbose_name = 'תגית מורים'

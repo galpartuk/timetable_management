@@ -148,6 +148,62 @@ def _build_assignments(wb: Workbook, spec: Dict[str, Any]) -> None:
     ], rows)
 
 
+def _build_teacher_summary(wb: Workbook, spec: Dict[str, Any]) -> None:
+    """What the system understood per teacher: one row per (teacher, subject,
+    class) with hours, plus the teacher's department. Pooled classes are
+    expanded so every class a teacher reaches shows up. This is the human
+    check that the import read the workbook correctly."""
+    from apps.subjects.models import Teacher, TeachingAssignment
+    school_id = spec.get('school_id') or 1
+    teachers = {
+        t.id: t for t in Teacher.objects.filter(school_id=school_id).prefetch_related('tags')
+    }
+    qs = (
+        TeachingAssignment.objects
+        .filter(school_class__grade__school_id=school_id)
+        .select_related('subject', 'school_class', 'school_class__grade')
+        .prefetch_related('additional_classes__grade')
+    )
+    rows: List[List[Any]] = []
+    for a in qs:
+        t = teachers.get(a.teacher_id)
+        if not t:
+            continue
+        dept = ', '.join(tag.name for tag in t.tags.all() if tag.kind == 'department')
+        name = f'{t.first_name} {t.last_name or ""}'.strip()
+        for cls in [a.school_class, *a.additional_classes.all()]:
+            rows.append([
+                name, dept, a.subject.name_he, cls.display_name,
+                float(a.weekly_hours), 'כן' if a.is_active else 'לא',
+            ])
+    rows.sort(key=lambda r: (r[0], r[2], r[3]))
+    ws = wb.create_sheet('סיכום מורים')
+    _write_table(ws, ['מורה', 'מחלקה', 'מקצוע', 'כיתה', 'שעות שבועיות', 'פעיל'], rows)
+
+
+def _build_diagnostics(wb: Workbook, spec: Dict[str, Any]) -> None:
+    """Pre-flight feasibility: per-class/teacher load vs available slots, run
+    through the same checker the solver uses. Surfaces overloaded classes
+    (e.g. a class needing more lessons than the week has slots) in the file so
+    the user can see and fix them before building."""
+    from apps.school.models import School
+    from solver.feasibility import analyze
+    school_id = spec.get('school_id') or 1
+    ws = wb.create_sheet('אבחון')
+    school = School.objects.filter(id=school_id).first()
+    if not school:
+        _write_table(ws, ['חומרה', 'קוד', 'יעד', 'הודעה'], [])
+        return
+    report = analyze(school)
+    rows: List[List[Any]] = []
+    for label, issues in (
+        ('חוסם', report.blockers), ('אזהרה', report.warnings), ('מידע', report.info),
+    ):
+        for i in issues:
+            rows.append([label, i.code, i.target, i.message])
+    _write_table(ws, ['חומרה', 'קוד', 'יעד', 'הודעה'], rows)
+
+
 def _build_constraints(wb: Workbook, spec: Dict[str, Any]) -> None:
     from apps.scheduling.models import Constraint
     school_id = spec.get('school_id') or 1
@@ -477,6 +533,8 @@ SHEET_BUILDERS: Dict[str, Callable[[Workbook, Dict[str, Any]], None]] = {
     'time_slots': _build_time_slots,
     'rooms': _build_rooms,
     'assignments': _build_assignments,
+    'teacher_summary': _build_teacher_summary,
+    'diagnostics': _build_diagnostics,
     'constraints': _build_constraints,
     'import_logs': _build_import_logs,
     'audit_logins': _build_audit_logins,        # super_admin only

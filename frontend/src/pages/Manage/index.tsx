@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next';
 import {
   Alert, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress,
   Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Divider, FormControlLabel, LinearProgress, MenuItem, Stack, TextField,
-  Typography,
+  Divider, FormControlLabel, LinearProgress, MenuItem, Radio, RadioGroup,
+  Stack, TextField, Typography,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -43,6 +43,8 @@ const SHEETS: SheetMeta[] = [
   { key: 'constraints', label: 'אילוצים', description: 'אילוצים מוגדרים: סוג, עדיפות, פרמטרים', group: 'master' },
   { key: 'import_logs', label: 'יומן ייבואים', description: '200 הייבואים האחרונים', group: 'master' },
   { key: 'roundtrip_haarachot', label: 'הערכות (פורמט מקורי)', description: 'ייצוא חזרה לפורמט הקלט — תפקידים + גיליון לכל מקצוע', group: 'master' },
+  { key: 'teacher_summary', label: 'סיכום מורים', description: 'מה המערכת הבינה — מורה × מקצוע × כיתה × שעות', group: 'master' },
+  { key: 'diagnostics', label: 'אבחון היתכנות', description: 'עומס מול משבצות זמינות — כיתות/מורים בעומס יתר', group: 'master' },
 
   { key: 'users', label: 'משתמשים', description: 'כל המשתמשים, תפקידים, התחברות אחרונה (super_admin)', group: 'admin' },
   { key: 'audit_logins', label: 'יומן התחברויות', description: '1000 התחברויות אחרונות (super_admin)', group: 'admin' },
@@ -162,12 +164,13 @@ function ExportTab() {
     [selected],
   );
 
-  const download = async () => {
+  const download = async (sheetsOverride?: string[]) => {
+    const sheets = sheetsOverride ?? Array.from(selected);
     setDownloading(true);
     setError('');
     try {
       const res = await exportExcel({
-        sheets: Array.from(selected),
+        sheets,
         timetable_id: timetableId || undefined,
         school_id: 1,
       });
@@ -202,6 +205,32 @@ function ExportTab() {
   return (
     <Stack spacing={3}>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+
+      {/* One-click: the normalized "what the system understood" workbook —
+          per-subject sheets + teacher summary + feasibility diagnostics. */}
+      <Card sx={{ border: '1px solid', borderColor: 'primary.light', background: 'rgba(79,70,229,0.03)' }}>
+        <CardContent>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}
+                 sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+            <Box>
+              <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
+                הורד קובץ מנורמל — מה שהמערכת הבינה
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
+                גיליון לכל מקצוע (פורמט מקורי) + סיכום מורים + אבחון היתכנות. בדקו, תקנו, וייבאו מחדש.
+              </Typography>
+            </Box>
+            <Button
+              variant="contained" size="large"
+              startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
+              disabled={downloading}
+              onClick={() => download(['diagnostics', 'teacher_summary', 'roundtrip_haarachot'])}
+            >
+              {downloading ? 'מייצא…' : 'הורד קובץ מנורמל'}
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
 
       {needsTimetable && (
         <Card>
@@ -300,7 +329,7 @@ function ExportTab() {
               variant="contained" size="large"
               startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
               disabled={selected.size === 0 || downloading || (needsTimetable && !timetableId)}
-              onClick={download}
+              onClick={() => download()}
             >
               {downloading ? 'מייצא…' : 'הורד אקסל'}
             </Button>
@@ -568,12 +597,15 @@ function ImportTab() {
   const [preview, setPreview] = useState<ImportResponse | null>(null);
   const [commitResult, setCommitResult] = useState<ImportResponse | null>(null);
   const [error, setError] = useState('');
+  // User identity decisions for ambiguous teachers: canonical name → id | 'new'.
+  const [resolutions, setResolutions] = useState<Record<string, number | 'new'>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
     setFile(null);
     setPreview(null);
     setCommitResult(null);
+    setResolutions({});
     setError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -596,6 +628,9 @@ function ImportTab() {
     try {
       const res = await uploadExcel(file, 1, { dryRun: true, wipeExisting });
       setPreview(res.data);
+      // Seed identity decisions from the suggested defaults.
+      const amb = res.data.preview?.teacher_resolutions?.ambiguous ?? [];
+      setResolutions(Object.fromEntries(amb.map((a) => [a.incoming, a.suggested])));
     } catch (e: any) {
       setError(e.response?.data?.error || 'תצוגה מקדימה נכשלה');
     } finally {
@@ -608,7 +643,7 @@ function ImportTab() {
     setCommitting(true);
     setError('');
     try {
-      const res = await uploadExcel(file, 1, { dryRun: false, wipeExisting });
+      const res = await uploadExcel(file, 1, { dryRun: false, wipeExisting, teacherOverrides: resolutions });
       setCommitResult(res.data);
       setPreview(null);
     } catch (e: any) {
@@ -790,6 +825,47 @@ function ImportTab() {
                   <Typography key={i} sx={{ fontSize: 12 }}>• {e}</Typography>
                 ))}
               </Alert>
+            )}
+
+            {(p.teacher_resolutions?.ambiguous_count ?? 0) > 0 && (
+              <Box sx={{ mt: 1, mb: 1 }}>
+                <Divider sx={{ my: 2 }} />
+                <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 0.5 }}>
+                  זיהוי מורים
+                </Typography>
+                <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>
+                  {p.teacher_resolutions!.ambiguous_count} שמות שדורשים הכרעה — האם זה מורה
+                  קיים או חדש? בחרנו ברירת מחדל סבירה; שנו לפי הצורך.
+                </Typography>
+                <Stack spacing={1.5}>
+                  {p.teacher_resolutions!.ambiguous.map((amb) => (
+                    <Box key={amb.incoming} sx={{ p: 1.25, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                      <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 0.5 }}>
+                        "{amb.incoming}"
+                      </Typography>
+                      <RadioGroup
+                        value={String(resolutions[amb.incoming] ?? amb.suggested)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setResolutions((prev) => ({
+                            ...prev,
+                            [amb.incoming]: v === 'new' ? 'new' : Number(v),
+                          }));
+                        }}
+                      >
+                        {amb.choices.map((ch) => (
+                          <FormControlLabel
+                            key={String(ch.value)}
+                            value={String(ch.value)}
+                            control={<Radio size="small" />}
+                            label={<Typography sx={{ fontSize: 13 }}>{ch.label}</Typography>}
+                          />
+                        ))}
+                      </RadioGroup>
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
             )}
 
             <Divider sx={{ my: 2 }} />
