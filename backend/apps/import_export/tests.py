@@ -316,6 +316,34 @@ class CoverageTests(TestCase):
         self.assertEqual(tanach['teacher'], '')
 
 
+class CleanedWorkbookTests(TestCase):
+    def test_normalizes_teacher_and_flags_missing(self):
+        import types
+        from apps.import_export.exporter import build_cleaned_workbook
+        parsed = types.SimpleNamespace(
+            assignment_rows=[
+                types.SimpleNamespace(subject='מתמטיקה', classes=[('ז', 1)], class_type_raw='',
+                                      teacher='דנה כהן- ז1', weekly_hours=Decimal('5'),
+                                      bagrut_hours=None, bagrut_code='', notes=''),
+                types.SimpleNamespace(subject='מתמטיקה', classes=[('ז', 2)], class_type_raw='',
+                                      teacher='', weekly_hours=Decimal('5'),
+                                      bagrut_hours=None, bagrut_code='', notes=''),
+            ],
+            role_rows=[],
+        )
+        wb = build_cleaned_workbook(parsed)
+        self.assertIn('בדיקה', wb.sheetnames)
+        self.assertIn('מתמטיקה', wb.sheetnames)
+        data = [r for r in wb['מתמטיקה'].iter_rows(values_only=True)][3:]
+        data = [r for r in data if r[0]]
+        z1 = next(r for r in data if r[0] == 'ז1')
+        self.assertEqual(z1[2], 'דנה כהן')          # annotation stripped
+        z2 = next(r for r in data if r[0] == 'ז2')
+        self.assertFalse(z2[2])                       # blank teacher
+        self.assertIn('חסר מורה', (z2[6] or ''))      # flagged in notes
+        self.assertEqual(wb['בדיקה']['B5'].value, 1)  # 1 missing-teacher row
+
+
 class TeacherNameSplitTests(TestCase):
     def test_split(self):
         from apps.import_export.parser import _split_teacher_name
