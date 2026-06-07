@@ -715,6 +715,40 @@ def bulk_delete(request):
                 'constraints_deleted': cons,
             }
 
+    elif op == 'wipe_everything':
+        # Full reset to a blank slate for a clean re-import: removes all
+        # imported + generated data (timetables, assignments, constraints,
+        # roles, tags, teachers, subjects, classes, grades). Keeps the school
+        # itself and its structural setup (time slots, rooms) so generation can
+        # run again after re-importing.
+        from apps.scheduling.models import Constraint
+        from apps.school.models import Grade
+        from apps.subjects.models import Subject, Teacher, TeacherRole, TeacherTag
+        with transaction.atomic():
+            summary = {
+                'timetables_deleted': Timetable.objects.filter(school_id=school_id).count(),
+                'entries_deleted': TimetableEntry.objects.filter(timetable__school_id=school_id).count(),
+                'assignments_deleted': TeachingAssignment.objects.filter(
+                    school_class__grade__school_id=school_id).count(),
+                'constraints_deleted': Constraint.objects.filter(school_id=school_id).count(),
+                'roles_deleted': TeacherRole.objects.filter(school_id=school_id).count(),
+                'tags_deleted': TeacherTag.objects.filter(school_id=school_id).count(),
+                'teachers_deleted': Teacher.objects.filter(school_id=school_id).count(),
+                'subjects_deleted': Subject.objects.filter(school_id=school_id).count(),
+                'classes_deleted': SchoolClass.objects.filter(grade__school_id=school_id).count(),
+                'grades_deleted': Grade.objects.filter(school_id=school_id).count(),
+            }
+            # Order: referencing rows first.
+            Timetable.objects.filter(school_id=school_id).delete()  # cascades entries
+            Constraint.objects.filter(school_id=school_id).delete()
+            TeachingAssignment.objects.filter(school_class__grade__school_id=school_id).delete()
+            TeacherRole.objects.filter(school_id=school_id).delete()
+            TeacherTag.objects.filter(school_id=school_id).delete()
+            Teacher.objects.filter(school_id=school_id).delete()
+            Subject.objects.filter(school_id=school_id).delete()
+            SchoolClass.objects.filter(grade__school_id=school_id).delete()
+            Grade.objects.filter(school_id=school_id).delete()
+
     else:
         return Response({'error': f'unknown operation {op!r}'},
                         status=status.HTTP_400_BAD_REQUEST)

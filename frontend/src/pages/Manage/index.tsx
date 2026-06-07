@@ -348,8 +348,11 @@ function ExportTab() {
 interface DangerOp {
   key: string;
   title: string;
+  titleEn: string;
   body: string;
+  bodyEn: string;
   buttonLabel: string;
+  buttonLabelEn: string;
   icon: ReactElement;
   superAdminOnly?: boolean;
   scope?: 'timetable';   // requires picking a specific timetable
@@ -358,58 +361,90 @@ interface DangerOp {
 
 const DANGER_OPS: DangerOp[] = [
   {
+    key: 'wipe_everything',
+    title: 'מחק את כל הנתונים (איפוס מלא)',
+    titleEn: 'Delete ALL data (full reset)',
+    body: 'מוחק הכול: מערכות שעות, שיבוצים, אילוצים, תפקידים, תגיות, מורים, מקצועות, כיתות ושכבות. נשארים רק בית הספר ומשבצות הזמן/חדרים. השתמשו לפני ייבוא נקי מאפס.',
+    bodyEn: 'Deletes everything: timetables, assignments, constraints, roles, tags, teachers, subjects, classes and grades. Only the school and its time slots/rooms remain. Use this before a clean import from scratch.',
+    buttonLabel: 'מחק הכול',
+    buttonLabelEn: 'Delete everything',
+    icon: <BlockIcon />,
+    bulkOperation: 'wipe_everything',
+  },
+  {
     key: 'delete_one_timetable',
     title: 'מחק מערכת שעות',
+    titleEn: 'Delete a timetable',
     body: 'מחיקת מערכת שעות אחת על שיעוריה. הפעולה אינה הפיכה.',
+    bodyEn: 'Delete a single timetable and its lessons. This cannot be undone.',
     buttonLabel: 'מחק מערכת',
+    buttonLabelEn: 'Delete timetable',
     icon: <DeleteIcon />,
     scope: 'timetable',
   },
   {
     key: 'clear_timetable_entries',
     title: 'נקה שיעורים ממערכת',
+    titleEn: 'Clear lessons from a timetable',
     body: 'מסיר את כל השיעורים ממערכת קיימת אך משאיר את המערכת עצמה (סטטוס יחזור ל-DRAFT).',
+    bodyEn: 'Removes all lessons from a timetable but keeps the timetable itself (status returns to DRAFT).',
     buttonLabel: 'נקה שיעורים',
+    buttonLabelEn: 'Clear lessons',
     icon: <ClearIcon />,
     scope: 'timetable',
   },
   {
     key: 'clear_assignments',
     title: 'נקה את כל שיבוצי ההוראה',
+    titleEn: 'Clear all teaching assignments',
     body: 'מסיר את כל ה-TeachingAssignment של בית הספר. בנייה אוטומטית לא תוכל לרוץ עד שיתווספו שיבוצים חדשים.',
+    bodyEn: 'Removes every teaching assignment for the school. Generation cannot run until new assignments are added.',
     buttonLabel: 'נקה שיבוצים',
+    buttonLabelEn: 'Clear assignments',
     icon: <ClearIcon />,
     bulkOperation: 'clear_assignments',
   },
   {
     key: 'clear_all_timetables',
     title: 'מחק את כל מערכות השעות',
+    titleEn: 'Delete all timetables',
     body: 'מוחק את כל המערכות וכל השיעורים שלהן. נתוני בסיס (מורים, מקצועות, כיתות) נשארים.',
+    bodyEn: 'Deletes every timetable and all their lessons. Master data (teachers, subjects, classes) is kept.',
     buttonLabel: 'מחק את כל המערכות',
+    buttonLabelEn: 'Delete all timetables',
     icon: <DeleteIcon />,
     bulkOperation: 'clear_all_timetables',
   },
   {
     key: 'clear_subjects',
     title: 'נקה מקצועות',
+    titleEn: 'Clear subjects',
     body: 'מוחק את כל המקצועות. ייכשל אם הם בשימוש בשיבוצים או בשיעורים — נקה אותם קודם.',
+    bodyEn: 'Deletes all subjects. Fails if they are referenced by assignments or lessons — clear those first.',
     buttonLabel: 'נקה מקצועות',
+    buttonLabelEn: 'Clear subjects',
     icon: <ClearIcon />,
     bulkOperation: 'clear_subjects',
   },
   {
     key: 'clear_teachers',
     title: 'נקה מורים',
+    titleEn: 'Clear teachers',
     body: 'מוחק את כל המורים. ייכשל אם הם בשימוש בשיבוצים או בשיעורים — נקה אותם קודם.',
+    bodyEn: 'Deletes all teachers. Fails if they are referenced by assignments or lessons — clear those first.',
     buttonLabel: 'נקה מורים',
+    buttonLabelEn: 'Clear teachers',
     icon: <ClearIcon />,
     bulkOperation: 'clear_teachers',
   },
   {
     key: 'wipe_school_data',
-    title: 'אפס את כל נתוני התזמון (Super Admin)',
-    body: 'מוחק את כל המערכות, השיעורים, שיבוצי ההוראה והאילוצים של בית הספר. נתוני בסיס (מורים, מקצועות, כיתות, משבצות זמן, חדרים) נשארים.',
-    buttonLabel: 'אפס הכול',
+    title: 'אפס את נתוני התזמון (Super Admin)',
+    titleEn: 'Reset scheduling data (Super Admin)',
+    body: 'מוחק את כל המערכות, השיעורים, שיבוצי ההוראה והאילוצים. נתוני בסיס (מורים, מקצועות, כיתות, משבצות זמן, חדרים) נשארים.',
+    bodyEn: 'Deletes all timetables, lessons, assignments and constraints. Master data (teachers, subjects, classes, time slots, rooms) is kept.',
+    buttonLabel: 'אפס',
+    buttonLabelEn: 'Reset',
     icon: <BlockIcon />,
     superAdminOnly: true,
     bulkOperation: 'wipe_school_data',
@@ -417,6 +452,9 @@ const DANGER_OPS: DangerOp[] = [
 ];
 
 function ManageTab() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [options, setOptions] = useState<{ is_super_admin: boolean } | null>(null);
   const [timetables, setTimetables] = useState<any[]>([]);
   const [confirm, setConfirm] = useState<{ op: DangerOp; timetableId?: number } | null>(null);
@@ -463,7 +501,9 @@ function ManageTab() {
   return (
     <Stack spacing={2}>
       <Alert severity="warning" icon={<WarningIcon />}>
-        <strong>אזור מסוכן.</strong> הפעולות בעמוד הזה אינן הפיכות. ודא שיש לך גיבוי לפני שתבצע מחיקות מסיביות.
+        <strong>{L('אזור מסוכן.', 'Danger zone.')}</strong>{' '}
+        {L('הפעולות בעמוד הזה אינן הפיכות. ודא שיש לך גיבוי לפני שתבצע מחיקות מסיביות.',
+           'Actions on this page are irreversible. Make sure you have a backup before bulk deletions.')}
       </Alert>
 
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
@@ -486,17 +526,18 @@ function ManageTab() {
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
-                    <Typography sx={{ fontSize: 15, fontWeight: 700 }}>{op.title}</Typography>
+                    <Typography sx={{ fontSize: 15, fontWeight: 700 }}>{isRtl ? op.title : op.titleEn}</Typography>
                     {op.superAdminOnly && (
                       <Chip size="small" icon={<ShieldIcon sx={{ fontSize: 12 }} />} label="super_admin"
                             sx={{ height: 20, fontSize: 11, background: 'rgba(79,70,229,0.10)', color: 'primary.dark' }} />
                     )}
                   </Stack>
-                  <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>{op.body}</Typography>
+                  <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>{isRtl ? op.body : op.bodyEn}</Typography>
                   <DangerLauncher
                     op={op}
                     timetables={timetables}
                     blocked={blocked}
+                    isRtl={isRtl}
                     onLaunch={(timetableId) => setConfirm({ op, timetableId })}
                   />
                 </Box>
@@ -507,27 +548,27 @@ function ManageTab() {
       })}
 
       <Dialog open={!!confirm} onClose={() => !working && setConfirm(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>אישור פעולה הרסנית</DialogTitle>
+        <DialogTitle>{L('אישור פעולה הרסנית', 'Confirm destructive action')}</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            <strong>{confirm?.op.title}</strong>
+            <strong>{confirm ? (isRtl ? confirm.op.title : confirm.op.titleEn) : ''}</strong>
             <Box component="span" sx={{ display: 'block', mt: 1, color: 'grey.700' }}>
-              {confirm?.op.body}
+              {confirm ? (isRtl ? confirm.op.body : confirm.op.bodyEn) : ''}
             </Box>
           </DialogContentText>
           <Divider sx={{ my: 2 }} />
           <DialogContentText sx={{ color: 'error.dark' }}>
-            הפעולה אינה הפיכה. האם להמשיך?
+            {L('הפעולה אינה הפיכה. האם להמשיך?', 'This cannot be undone. Continue?')}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirm(null)} disabled={working}>ביטול</Button>
+          <Button onClick={() => setConfirm(null)} disabled={working}>{L('ביטול', 'Cancel')}</Button>
           <Button
             variant="contained" color="error"
             onClick={run} disabled={working}
             startIcon={working ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon />}
           >
-            כן, בצע מחיקה
+            {L('כן, בצע מחיקה', 'Yes, delete')}
           </Button>
         </DialogActions>
       </Dialog>
@@ -535,18 +576,20 @@ function ManageTab() {
   );
 }
 
-function DangerLauncher({ op, timetables, blocked, onLaunch }: {
+function DangerLauncher({ op, timetables, blocked, isRtl, onLaunch }: {
   op: DangerOp;
   timetables: any[];
   blocked: boolean | undefined;
+  isRtl: boolean;
   onLaunch: (timetableId?: number) => void;
 }) {
   const [tid, setTid] = useState<number | ''>('');
+  const buttonLabel = isRtl ? op.buttonLabel : op.buttonLabelEn;
 
   if (blocked) {
     return (
       <Button size="small" variant="outlined" disabled startIcon={<BlockIcon fontSize="small" />}>
-        דרושה הרשאת super_admin
+        {isRtl ? 'דרושה הרשאת super_admin' : 'Requires super_admin'}
       </Button>
     );
   }
@@ -560,7 +603,7 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
           onChange={(e) => setTid(Number(e.target.value))}
           sx={{ minWidth: 220 }}
         >
-          <MenuItem value="" disabled>בחר מערכת</MenuItem>
+          <MenuItem value="" disabled>{isRtl ? 'בחר מערכת' : 'Pick a timetable'}</MenuItem>
           {timetables.map((tt: any) => (
             <MenuItem key={tt.id} value={tt.id}>
               {tt.name} — {tt.academic_year}
@@ -573,7 +616,7 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
           disabled={!tid}
           onClick={() => onLaunch(tid as number)}
         >
-          {op.buttonLabel}
+          {buttonLabel}
         </Button>
       </Stack>
     );
@@ -585,7 +628,7 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
       startIcon={op.icon}
       onClick={() => onLaunch()}
     >
-      {op.buttonLabel}
+      {buttonLabel}
     </Button>
   );
 }
