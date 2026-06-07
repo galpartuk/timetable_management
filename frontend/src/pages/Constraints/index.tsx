@@ -17,20 +17,23 @@ type Field =
   | { kind: 'subject'; required?: boolean; allowAll?: boolean }
   | { kind: 'class'; required?: boolean; allowAll?: boolean }
   | { kind: 'tag'; required?: boolean }
-  | { kind: 'slots'; key: string; labelKey: string }
-  | { kind: 'days'; key: string; labelKey: string }
-  | { kind: 'param'; key: string; labelKey: string; type: 'number' | 'periods' | 'day'; default: any };
+  | { kind: 'slots'; key: string; labelKey: string; labelEn: string }
+  | { kind: 'days'; key: string; labelKey: string; labelEn: string }
+  | { kind: 'param'; key: string; labelKey: string; labelEn: string; type: 'number' | 'periods' | 'day'; default: any };
 
 const DAY_LABELS = [
-  { v: 1, l: 'ראשון' }, { v: 2, l: 'שני' }, { v: 3, l: 'שלישי' },
-  { v: 4, l: 'רביעי' }, { v: 5, l: 'חמישי' },
+  { v: 1, l: 'ראשון', lEn: 'Sunday' }, { v: 2, l: 'שני', lEn: 'Monday' }, { v: 3, l: 'שלישי', lEn: 'Tuesday' },
+  { v: 4, l: 'רביעי', lEn: 'Wednesday' }, { v: 5, l: 'חמישי', lEn: 'Thursday' },
 ];
-const dayLabel = (v: number) => DAY_LABELS.find((d) => d.v === v)?.l ?? String(v);
+const dayLabel = (v: number, isRtl = true) =>
+  (isRtl ? DAY_LABELS.find((d) => d.v === v)?.l : DAY_LABELS.find((d) => d.v === v)?.lEn) ?? String(v);
 
 interface TypeSchema {
   value: string;
   labelHe: string;
+  labelEn: string;
   description?: string;
+  descriptionEn?: string;
   fields: Field[];
 }
 
@@ -38,88 +41,106 @@ const TYPE_SCHEMAS: TypeSchema[] = [
   {
     value: 'max_daily_hours_class',
     labelHe: 'מקסימום שעות ביום לכיתה',
+    labelEn: 'Max daily hours per class',
     description: 'הגבלת שיעורים יומיים לכל כיתה (או כיתה ספציפית).',
+    descriptionEn: 'Limit daily lessons for every class (or a specific class).',
     fields: [
       { kind: 'class', allowAll: true },
-      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', type: 'number', default: 8 },
+      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', labelEn: 'Max hours', type: 'number', default: 8 },
     ],
   },
   {
     value: 'max_daily_hours_teacher',
     labelHe: 'מקסימום שעות ביום למורה',
+    labelEn: 'Max daily hours per teacher',
     description: 'הגבלת שיעורים יומיים לכל מורה (או מורה ספציפי).',
+    descriptionEn: 'Limit daily lessons for every teacher (or a specific teacher).',
     fields: [
       { kind: 'teacher', allowAll: true },
-      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', type: 'number', default: 6 },
+      { kind: 'param', key: 'max_hours', labelKey: 'שעות מקסימום', labelEn: 'Max hours', type: 'number', default: 6 },
     ],
   },
   {
     value: 'consecutive_hours',
     labelHe: 'מקסימום שעות מקצוע ליום',
+    labelEn: 'Max subject hours per day',
     description: 'כמה שיעורים של מקצוע יכולים להיות באותו יום באותה כיתה.',
+    descriptionEn: 'How many lessons of a subject can occur on the same day in the same class.',
     fields: [
       { kind: 'class', allowAll: true },
       { kind: 'subject', allowAll: true },
-      { kind: 'param', key: 'max_per_day', labelKey: 'מקס׳ ליום', type: 'number', default: 2 },
+      { kind: 'param', key: 'max_per_day', labelKey: 'מקס׳ ליום', labelEn: 'Max per day', type: 'number', default: 2 },
     ],
   },
   {
     value: 'consecutive_pair',
     labelHe: 'זוג שיעורים רצופים',
+    labelEn: 'Consecutive lesson pairs',
     description: 'כופה שלפחות N שיעורים של (כיתה, מקצוע) יהיו רצופים בלוח. שימושי למתמטיקה ומעבדות.',
+    descriptionEn: 'Forces at least N lessons of a (class, subject) to be consecutive. Useful for math and labs.',
     fields: [
       { kind: 'class', required: true },
       { kind: 'subject', required: true },
-      { kind: 'param', key: 'min_pairs', labelKey: 'מינ׳ זוגות', type: 'number', default: 1 },
+      { kind: 'param', key: 'min_pairs', labelKey: 'מינ׳ זוגות', labelEn: 'Min pairs', type: 'number', default: 1 },
     ],
   },
   {
     value: 'lunch_break',
     labelHe: 'הפסקת אוכל',
+    labelEn: 'Lunch break',
     description: 'שעה אחת או יותר ביום שלא יוקצו לה שיעורים. לדוגמה: שעה 5.',
+    descriptionEn: 'One or more periods per day with no lessons assigned. For example: period 5.',
     fields: [
       { kind: 'class', allowAll: true },
-      { kind: 'param', key: 'periods', labelKey: 'שעות הפנויות (CSV)', type: 'periods', default: '5' },
+      { kind: 'param', key: 'periods', labelKey: 'שעות הפנויות (CSV)', labelEn: 'Free periods (CSV)', type: 'periods', default: '5' },
     ],
   },
   {
     value: 'no_last_period',
     labelHe: 'לא בשיעור אחרון',
+    labelEn: 'Not in last period',
     description: 'אסור לשבץ שיעורים בשעה/שעות האחרונות של היום.',
+    descriptionEn: 'Lessons may not be scheduled in the last period(s) of the day.',
     fields: [
       { kind: 'class', allowAll: true },
       { kind: 'subject', allowAll: true },
       { kind: 'teacher', allowAll: true },
-      { kind: 'param', key: 'periods', labelKey: 'שעות אסורות (CSV)', type: 'periods', default: '10' },
+      { kind: 'param', key: 'periods', labelKey: 'שעות אסורות (CSV)', labelEn: 'Forbidden periods (CSV)', type: 'periods', default: '10' },
     ],
   },
   {
     value: 'teacher_availability',
     labelHe: 'זמינות מורה',
+    labelEn: 'Teacher availability',
     description: 'חסום זמנים ספציפיים בהם המורה לא יכול ללמד.',
+    descriptionEn: 'Block specific times when the teacher cannot teach.',
     fields: [
       { kind: 'teacher', required: true },
-      { kind: 'slots', key: 'unavailable', labelKey: 'שעות חסומות' },
+      { kind: 'slots', key: 'unavailable', labelKey: 'שעות חסומות', labelEn: 'Blocked periods' },
     ],
   },
   {
     value: 'subject_day_blackout',
     labelHe: 'חסימת מקצוע ביום',
+    labelEn: 'Subject day blackout',
     description: 'אסור לשבץ את המקצוע בימים שנבחרו (לכיתה ספציפית או לכולן).',
+    descriptionEn: 'The subject may not be scheduled on the selected days (for a specific class or all).',
     fields: [
       { kind: 'subject', required: true },
       { kind: 'class', allowAll: true },
-      { kind: 'days', key: 'days', labelKey: 'ימים חסומים' },
+      { kind: 'days', key: 'days', labelKey: 'ימים חסומים', labelEn: 'Blocked days' },
     ],
   },
   {
     value: 'group_blocked_slot',
     labelHe: 'פגישת קבוצה (חסימת תגית)',
+    labelEn: 'Group meeting (tag blackout)',
     description: 'חסום קבוצת מורים (תגית) ביום ושעות ספציפיים — מתאים לפגישות צוות שבועיות.',
+    descriptionEn: 'Block a group of teachers (tag) on a specific day and periods - suitable for weekly staff meetings.',
     fields: [
       { kind: 'tag', required: true },
-      { kind: 'param', key: 'day', labelKey: 'יום בשבוע', type: 'day', default: 3 },
-      { kind: 'param', key: 'periods', labelKey: 'שעות (CSV)', type: 'periods', default: '1' },
+      { kind: 'param', key: 'day', labelKey: 'יום בשבוע', labelEn: 'Day of week', type: 'day', default: 3 },
+      { kind: 'param', key: 'periods', labelKey: 'שעות (CSV)', labelEn: 'Periods (CSV)', type: 'periods', default: '1' },
     ],
   },
 ];
@@ -133,6 +154,7 @@ export default function ConstraintsPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [tags, setTags] = useState<any[]>([]);
   const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
 
   const loadData = () => {
     getConstraints().then((r: any) => setConstraints(r.data.results ?? [])).catch(() => {});
@@ -212,7 +234,7 @@ export default function ConstraintsPage() {
                   </TableCell>
                   <TableCell>
                     <Typography sx={{ fontSize: 13, color: 'grey.700' }}>
-                      {describeConstraint(c, { teachers, subjects, classes, tags })}
+                      {describeConstraint(c, { teachers, subjects, classes, tags }, isRtl)}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -300,7 +322,8 @@ function AddConstraintDialog({ teachers, subjects, classes, tags, onSave, onClos
   onSave: (data: any) => void;
   onClose: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
   const initial = TYPE_SCHEMAS[0];
   const [form, setForm] = useState<any>({
     name: '',
@@ -344,7 +367,7 @@ function AddConstraintDialog({ teachers, subjects, classes, tags, onSave, onClos
             onChange={(e) => switchType(e.target.value)}
           >
             {TYPE_SCHEMAS.map((s) => (
-              <MenuItem key={s.value} value={s.value}>{s.labelHe}</MenuItem>
+              <MenuItem key={s.value} value={s.value}>{isRtl ? s.labelHe : s.labelEn}</MenuItem>
             ))}
           </TextField>
           <TextField
@@ -388,7 +411,9 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
   classes: any[];
   tags: any[];
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const allLabel = t('constraints.all');
 
   if (field.kind === 'days') {
@@ -404,13 +429,13 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
     return (
       <Box>
         <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700', mb: 1 }}>
-          {field.labelKey}
+          {L(field.labelKey, field.labelEn)}
         </Typography>
         <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', rowGap: 0.75 }}>
           {DAY_LABELS.map((d) => (
             <Chip
               key={d.v}
-              label={d.l}
+              label={isRtl ? d.l : d.lEn}
               onClick={() => toggle(d.v)}
               color={selected.includes(d.v) ? 'primary' : 'default'}
               variant={selected.includes(d.v) ? 'filled' : 'outlined'}
@@ -431,13 +456,13 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
     return (
       <Box>
         <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700', mb: 1 }}>
-          {field.labelKey}
+          {L(field.labelKey, field.labelEn)}
         </Typography>
         <Stack spacing={1}>
           {slots.map((s, idx) => (
             <Stack key={idx} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
               <TextField
-                select size="small" label="יום" value={s.day}
+                select size="small" label={L('יום', 'Day')} value={s.day}
                 sx={{ minWidth: 110 }}
                 onChange={(e) => {
                   const next = [...slots];
@@ -445,10 +470,10 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
                   update(next);
                 }}
               >
-                {DAY_LABELS.map((d) => <MenuItem key={d.v} value={d.v}>{d.l}</MenuItem>)}
+                {DAY_LABELS.map((d) => <MenuItem key={d.v} value={d.v}>{isRtl ? d.l : d.lEn}</MenuItem>)}
               </TextField>
               <TextField
-                size="small" type="number" label="שעה" value={s.period}
+                size="small" type="number" label={L('שעה', 'Period')} value={s.period}
                 sx={{ width: 90 }}
                 onChange={(e) => {
                   const next = [...slots];
@@ -466,7 +491,7 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
             size="small" startIcon={<AddCircleOutlined />} sx={{ alignSelf: 'flex-start' }}
             onClick={() => update([...slots, { day: 1, period: 1 }])}
           >
-            הוסף שעה חסומה
+            {L('הוסף שעה חסומה', 'Add blocked period')}
           </Button>
         </Stack>
       </Box>
@@ -478,8 +503,8 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
       // CSV of integers, e.g., "5,6" — translate to array on save.
       return (
         <TextField
-          fullWidth label={field.labelKey}
-          helperText="הקלד מספרים מופרדים בפסיק. דוגמה: 5,6"
+          fullWidth label={L(field.labelKey, field.labelEn)}
+          helperText={L('הקלד מספרים מופרדים בפסיק. דוגמה: 5,6', 'Enter comma-separated numbers. Example: 5,6')}
           value={
             Array.isArray(form.parameters[field.key])
               ? form.parameters[field.key].join(',')
@@ -500,28 +525,24 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
       );
     }
     if (field.type === 'day') {
-      const dayLabels = [
-        { v: 1, l: 'ראשון' }, { v: 2, l: 'שני' }, { v: 3, l: 'שלישי' },
-        { v: 4, l: 'רביעי' }, { v: 5, l: 'חמישי' },
-      ];
       return (
         <TextField
-          fullWidth select label={field.labelKey}
+          fullWidth select label={L(field.labelKey, field.labelEn)}
           value={form.parameters[field.key] ?? field.default}
           onChange={(e) => setForm({
             ...form,
             parameters: { ...form.parameters, [field.key]: Number(e.target.value) },
           })}
         >
-          {dayLabels.map((d) => (
-            <MenuItem key={d.v} value={d.v}>{d.l}</MenuItem>
+          {DAY_LABELS.map((d) => (
+            <MenuItem key={d.v} value={d.v}>{isRtl ? d.l : d.lEn}</MenuItem>
           ))}
         </TextField>
       );
     }
     return (
       <TextField
-        fullWidth type="number" label={field.labelKey}
+        fullWidth type="number" label={L(field.labelKey, field.labelEn)}
         value={form.parameters[field.key] ?? field.default}
         onChange={(e) => setForm({
           ...form,
@@ -534,11 +555,11 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
   if (field.kind === 'tag') {
     return (
       <TextField
-        fullWidth select label="תגית מורים"
+        fullWidth select label={L('תגית מורים', 'Teacher tag')}
         value={form.tag ?? ''}
         onChange={(e) => setForm({ ...form, tag: e.target.value === '' ? null : Number(e.target.value) })}
       >
-        {tags.length === 0 && <MenuItem value="" disabled>אין תגיות — צרו ב-ניהול הנתונים</MenuItem>}
+        {tags.length === 0 && <MenuItem value="" disabled>{L('אין תגיות — צרו ב-ניהול הנתונים', 'No tags — create them in Data Management')}</MenuItem>}
         {tags.map((x: any) => (
           <MenuItem key={x.id} value={x.id}>{x.name} ({x.teacher_count})</MenuItem>
         ))}
@@ -597,25 +618,27 @@ function FieldInput({ field, form, setForm, teachers, subjects, classes, tags }:
 function describeConstraint(
   c: any,
   lists: { teachers: any[]; subjects: any[]; classes: any[]; tags: any[] },
+  isRtl = true,
 ): string {
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const p = c.parameters || {};
   const parts: string[] = [];
 
   // Target (who/what the rule applies to).
   if (c.teacher) {
     const t = lists.teachers.find((x) => x.id === c.teacher);
-    parts.push(`מורה: ${t?.full_name ?? c.teacher}`);
+    parts.push(`${L('מורה', 'Teacher')}: ${t?.full_name ?? c.teacher}`);
   } else if (c.school_class) {
     const cl = lists.classes.find((x) => x.id === c.school_class);
-    parts.push(`כיתה: ${cl ? `${cl.grade_name}${cl.number}` : c.school_class}`);
+    parts.push(`${L('כיתה', 'Class')}: ${cl ? `${cl.grade_name}${cl.number}` : c.school_class}`);
   } else if (c.subject) {
     const s = lists.subjects.find((x) => x.id === c.subject);
-    parts.push(`מקצוע: ${s?.name_he ?? c.subject}`);
+    parts.push(`${L('מקצוע', 'Subject')}: ${s?.name_he ?? c.subject}`);
   } else if (c.tag) {
     const tag = lists.tags.find((x) => x.id === c.tag);
-    parts.push(`תגית: ${tag?.name ?? c.tag}`);
+    parts.push(`${L('תגית', 'Tag')}: ${tag?.name ?? c.tag}`);
   } else if (['max_daily_hours_class', 'max_daily_hours_teacher', 'consecutive_hours', 'lunch_break', 'no_last_period'].includes(c.constraint_type)) {
-    parts.push('הכול');
+    parts.push(L('הכול', 'All'));
   }
 
   // Parameter summary, per type.
@@ -623,40 +646,40 @@ function describeConstraint(
   switch (c.constraint_type) {
     case 'max_daily_hours_class':
     case 'max_daily_hours_teacher':
-      if (p.max_hours != null) parts.push(`עד ${p.max_hours} שעות ביום`);
+      if (p.max_hours != null) parts.push(L(`עד ${p.max_hours} שעות ביום`, `Up to ${p.max_hours} hours per day`));
       break;
     case 'consecutive_hours':
-      if (p.max_per_day != null) parts.push(`עד ${p.max_per_day} ביום`);
+      if (p.max_per_day != null) parts.push(L(`עד ${p.max_per_day} ביום`, `Up to ${p.max_per_day} per day`));
       break;
     case 'consecutive_pair':
-      parts.push(`לפחות ${p.min_pairs ?? 1} זוגות רצופים`);
+      parts.push(L(`לפחות ${p.min_pairs ?? 1} זוגות רצופים`, `At least ${p.min_pairs ?? 1} consecutive pairs`));
       break;
     case 'lunch_break':
-      if (periods) parts.push(`שעות פנויות: ${periods}`);
+      if (periods) parts.push(L(`שעות פנויות: ${periods}`, `Free periods: ${periods}`));
       break;
     case 'no_last_period':
-      if (periods) parts.push(`שעות אסורות: ${periods}`);
+      if (periods) parts.push(L(`שעות אסורות: ${periods}`, `Forbidden periods: ${periods}`));
       break;
     case 'teacher_availability': {
       const slots = Array.isArray(p.unavailable) ? p.unavailable : [];
       if (slots.length) {
-        parts.push('חסום: ' + slots.map((s: any) => `${dayLabel(s.day)} ${s.period}`).join(', '));
+        parts.push(L('חסום: ', 'Blocked: ') + slots.map((s: any) => `${dayLabel(s.day, isRtl)} ${s.period}`).join(', '));
       }
       break;
     }
     case 'subject_day_blackout': {
       const days = Array.isArray(p.days) ? p.days : [];
       if (days.length) {
-        parts.push('ימים חסומים: ' + days.map((d: number) => dayLabel(d)).join(', '));
+        parts.push(L('ימים חסומים: ', 'Blocked days: ') + days.map((d: number) => dayLabel(d, isRtl)).join(', '));
       }
       break;
     }
     case 'group_blocked_slot': {
       const slots = Array.isArray(p.slots) ? p.slots : [];
       if (slots.length) {
-        parts.push(slots.map((s: any) => `${dayLabel(s.day)} ${s.period}`).join(', '));
+        parts.push(slots.map((s: any) => `${dayLabel(s.day, isRtl)} ${s.period}`).join(', '));
       } else if (p.day != null) {
-        parts.push(`${dayLabel(p.day)} ${Array.isArray(p.periods) ? p.periods.join(', ') : p.periods ?? ''}`);
+        parts.push(`${dayLabel(p.day, isRtl)} ${Array.isArray(p.periods) ? p.periods.join(', ') : p.periods ?? ''}`);
       }
       break;
     }

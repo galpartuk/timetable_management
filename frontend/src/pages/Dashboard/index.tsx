@@ -65,6 +65,7 @@ export default function Dashboard() {
   const [timetables, setTimetables] = useState<any[]>([]);
   const [latestQuality, setLatestQuality] = useState<TimetableQuality | null>(null);
   const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const ChevronEnd = isRtl ? ArrowBackIcon : ArrowForwardIcon;
 
   useEffect(() => {
@@ -202,33 +203,33 @@ export default function Dashboard() {
             >
               <Box sx={{ flex: 1 }}>
                 <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'grey.500', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                  איכות מערכת אחרונה
+                  {L('איכות מערכת אחרונה', 'Latest timetable quality')}
                 </Typography>
                 <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 0.25 }}>
                   {latestQuality.name}
                 </Typography>
                 <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
-                  {latestQuality.totals.entries} שיעורים · {latestQuality.teachers.length} מורים · {latestQuality.classes.length} כיתות
+                  {latestQuality.totals.entries} {L('שיעורים', 'lessons')} · {latestQuality.teachers.length} {L('מורים', 'teachers')} · {latestQuality.classes.length} {L('כיתות', 'classes')}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
                 <KpiBadge
-                  label="חלונות מורים"
+                  label={L('חלונות מורים', 'Teacher gaps')}
                   value={latestQuality.totals.total_teacher_windows}
                   tone={latestQuality.totals.total_teacher_windows < 30 ? 'good' : latestQuality.totals.total_teacher_windows < 100 ? 'warn' : 'bad'}
                 />
                 <KpiBadge
-                  label="חלונות ארוכים"
+                  label={L('חלונות ארוכים', 'Long gaps')}
                   value={latestQuality.totals.total_long_windows}
                   tone={latestQuality.totals.total_long_windows === 0 ? 'good' : 'bad'}
                 />
                 <KpiBadge
-                  label="חלונות כיתות"
+                  label={L('חלונות כיתות', 'Class gaps')}
                   value={latestQuality.totals.total_class_windows}
                   tone={latestQuality.totals.total_class_windows < 10 ? 'good' : latestQuality.totals.total_class_windows < 50 ? 'warn' : 'bad'}
                 />
                 <KpiBadge
-                  label="אחרי 8"
+                  label={L('אחרי 8', 'After 8th')}
                   value={latestQuality.totals.late_period_lessons}
                   tone="warn"
                 />
@@ -237,7 +238,7 @@ export default function Dashboard() {
                   variant="outlined"
                   onClick={() => navigate('/manage')}
                 >
-                  פירוט מלא
+                  {L('פירוט מלא', 'Full breakdown')}
                 </Button>
               </Stack>
             </Stack>

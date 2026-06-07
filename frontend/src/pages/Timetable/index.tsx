@@ -80,6 +80,7 @@ export default function TimetablePage() {
   const [showLog, setShowLog] = useState(false);
   const [buildFailed, setBuildFailed] = useState(false);
   const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const { build, outcome, trackBuild, adoptIfGenerating } = useBuildProgress();
   // Show the inline progress card only when the live build belongs to the
   // currently-selected timetable; the global banner covers the cross-page case.
@@ -287,12 +288,12 @@ export default function TimetablePage() {
       visible_entry_count: entries.length,
     },
     quickActions: [
-      { label: 'צור מערכת חדשה והפק אותה', prompt: 'צור מערכת שעות חדשה לשנת 2026-2027 בשם "מערכת חדשה" והפעל בנייה אוטומטית.' },
-      { label: 'מצא התנגשויות במערכת', prompt: 'בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.' },
-      { label: 'נקוד את המערכת ותן תובנות', prompt: 'תן לי סקירה של המערכת הנוכחית – כמה שיעורים, כמה מורים, ומה איכות הפיזור.' },
-      { label: 'הראה לי את שיבוצי ההוראה', prompt: 'הצג את כל שיבוצי ההוראה הקיימים, כדי שאוכל לראות מה הבנייה האוטומטית מקבלת כקלט.' },
+      { label: L('צור מערכת חדשה והפק אותה', 'Create a new timetable and generate it'), prompt: L('צור מערכת שעות חדשה לשנת 2026-2027 בשם "מערכת חדשה" והפעל בנייה אוטומטית.', 'Create a new timetable for 2026-2027 named "New timetable" and start auto-generation.') },
+      { label: L('מצא התנגשויות במערכת', 'Find conflicts in the timetable'), prompt: L('בדוק התנגשויות במערכת הנוכחית והצג רשימה מסודרת.', 'Check the current timetable for conflicts and show an organized list.') },
+      { label: L('נקוד את המערכת ותן תובנות', 'Score the timetable and give insights'), prompt: L('תן לי סקירה של המערכת הנוכחית – כמה שיעורים, כמה מורים, ומה איכות הפיזור.', 'Give me an overview of the current timetable - how many lessons, how many teachers, and the quality of the distribution.') },
+      { label: L('הראה לי את שיבוצי ההוראה', 'Show me the teaching assignments'), prompt: L('הצג את כל שיבוצי ההוראה הקיימים, כדי שאוכל לראות מה הבנייה האוטומטית מקבלת כקלט.', 'Show all existing teaching assignments so I can see what the auto-generation receives as input.') },
     ],
-  }), [selectedTT?.id, selectedTT?.name, selectedTT?.status, viewMode, selectedId, entries.length]));
+  }), [selectedTT?.id, selectedTT?.name, selectedTT?.status, viewMode, selectedId, entries.length, isRtl]));
 
   return (
     <Box>
@@ -318,7 +319,7 @@ export default function TimetablePage() {
             disabled={!selectedTT}
             onClick={async () => {
               if (!selectedTT) return;
-              if (!confirm(`למחוק את "${selectedTT.name}"? הפעולה אינה הפיכה.`)) return;
+              if (!confirm(L(`למחוק את "${selectedTT.name}"? הפעולה אינה הפיכה.`, `Delete "${selectedTT.name}"? This action cannot be undone.`))) return;
               try {
                 await deleteTimetable(selectedTT.id);
                 const r = await getTimetables();
@@ -327,11 +328,11 @@ export default function TimetablePage() {
                 setSelectedTT(list[0] ?? null);
                 setEntries([]);
               } catch (e: any) {
-                setError(e.response?.data?.error || 'מחיקה נכשלה');
+                setError(e.response?.data?.error || L('מחיקה נכשלה', 'Delete failed'));
               }
             }}
           >
-            מחק
+            {L('מחק', 'Delete')}
           </Button>
           <Button
             variant="outlined"
@@ -340,7 +341,7 @@ export default function TimetablePage() {
             onClick={() => window.print()}
             className="no-print"
           >
-            הדפסה
+            {L('הדפסה', 'Print')}
           </Button>
           <Button
             variant="contained"
@@ -836,7 +837,7 @@ function Cell({
       await moveTimetableEntry(timetableId, entryId, day, period);
       onChange?.();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'הזזה נכשלה');
+      alert(err.response?.data?.error || (isRtl ? 'הזזה נכשלה' : 'Move failed'));
     }
   };
 
@@ -864,7 +865,7 @@ function Cell({
             fontWeight: 700,
           }}
         >
-          חלון
+          {isRtl ? 'חלון' : 'Gap'}
         </Box>
       );
     }
@@ -1068,6 +1069,9 @@ function GridHeader({ children }: { children: React.ReactNode }) {
 // ── Quality summary bar ──────────────────────────────────────────────────
 
 function QualitySummaryBar({ quality }: { quality: TimetableQuality }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const t = quality.totals;
   return (
     <Card sx={{ mb: 2.5 }}>
@@ -1076,32 +1080,32 @@ function QualitySummaryBar({ quality }: { quality: TimetableQuality }) {
           sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}>
           <Box>
             <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'grey.700' }}>
-              סיכום איכות המערכת
+              {L('סיכום איכות המערכת', 'Timetable quality summary')}
             </Typography>
             <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
-              מערכת זו נוצרה תוך מזעור חלונות המורים והכיתות. ככל שהמספרים נמוכים יותר — המערכת איכותית יותר.
+              {L('מערכת זו נוצרה תוך מזעור חלונות המורים והכיתות. ככל שהמספרים נמוכים יותר — המערכת איכותית יותר.', 'This timetable was built by minimizing teacher and class gaps. The lower the numbers, the higher the quality.')}
             </Typography>
           </Box>
           <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
             <Stat
-              label="שיעורים"
+              label={L('שיעורים', 'Lessons')}
               value={t.entries}
               color="primary"
             />
             <Stat
-              label="חלונות מורים"
+              label={L('חלונות מורים', 'Teacher gaps')}
               value={t.total_teacher_windows}
               tone={t.total_teacher_windows < 30 ? 'good' : t.total_teacher_windows < 100 ? 'warn' : 'bad'}
-              hint={`${t.teachers_with_windows} מורים מושפעים`}
+              hint={L(`${t.teachers_with_windows} מורים מושפעים`, `${t.teachers_with_windows} teachers affected`)}
             />
             <Stat
-              label="חלונות כיתות"
+              label={L('חלונות כיתות', 'Class gaps')}
               value={t.total_class_windows}
               tone={t.total_class_windows < 10 ? 'good' : t.total_class_windows < 50 ? 'warn' : 'bad'}
-              hint={`${t.classes_with_windows} כיתות מושפעות`}
+              hint={L(`${t.classes_with_windows} כיתות מושפעות`, `${t.classes_with_windows} classes affected`)}
             />
             <Stat
-              label="שיעורים אחרי 8"
+              label={L('שיעורים אחרי 8', 'Lessons after period 8')}
               value={t.late_period_lessons}
               tone="warn"
             />
@@ -1155,8 +1159,13 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
   viewMode: 'class' | 'teacher';
   entries: any[];
 }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const totalLessons = entries.length;
-  const dayLabels: Record<number, string> = { 1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי' };
+  const dayLabels: Record<number, string> = isRtl
+    ? { 1: 'ראשון', 2: 'שני', 3: 'שלישי', 4: 'רביעי', 5: 'חמישי' }
+    : { 1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday' };
 
   // Per-day lesson counts and span
   const days = [1, 2, 3, 4, 5].map((d) => {
@@ -1177,8 +1186,8 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
         </Typography>
         <Typography sx={{ fontSize: 12, color: 'grey.500', mb: 2 }}>
           {viewMode === 'teacher'
-            ? `${totalLessons} שיעורים · ${quality.days_taught || 0} ימי הוראה`
-            : `${totalLessons} שיעורים · ${days.filter((d) => d.lessons > 0).length} ימי לימוד`}
+            ? L(`${totalLessons} שיעורים · ${quality.days_taught || 0} ימי הוראה`, `${totalLessons} lessons · ${quality.days_taught || 0} teaching days`)
+            : L(`${totalLessons} שיעורים · ${days.filter((d) => d.lessons > 0).length} ימי לימוד`, `${totalLessons} lessons · ${days.filter((d) => d.lessons > 0).length} school days`)}
         </Typography>
 
         <Box sx={{
@@ -1186,7 +1195,7 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
         }}>
           <Box sx={{ background: 'rgba(245,158,11,0.10)', borderRadius: 2, p: 1.25 }}>
             <Typography sx={{ fontSize: 10, color: '#b45309', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              חלונות
+              {L('חלונות', 'Gaps')}
             </Typography>
             <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#b45309', mt: 0.25 }}>
               {quality.windows}
@@ -1194,7 +1203,7 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
           </Box>
           <Box sx={{ background: 'rgba(79,70,229,0.08)', borderRadius: 2, p: 1.25 }}>
             <Typography sx={{ fontSize: 10, color: 'primary.dark', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              שיעורים
+              {L('שיעורים', 'Lessons')}
             </Typography>
             <Typography sx={{ fontSize: 22, fontWeight: 800, color: 'primary.dark', mt: 0.25 }}>
               {quality.lessons}
@@ -1203,7 +1212,7 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
         </Box>
 
         <Typography sx={{ fontSize: 12, fontWeight: 700, color: 'grey.700', mb: 1 }}>
-          פירוט יומי
+          {L('פירוט יומי', 'Daily breakdown')}
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
           {days.map((d) => (
@@ -1218,14 +1227,14 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
               <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{dayLabels[d.day]}</Typography>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                 {d.lessons === 0 ? (
-                  <Chip size="small" label="חופש" sx={{ height: 18, fontSize: 10 }} />
+                  <Chip size="small" label={L('חופש', 'Off')} sx={{ height: 18, fontSize: 10 }} />
                 ) : (
                   <>
                     <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
-                      {d.lessons} שיעורים · שיעור {d.first}–{d.last}
+                      {L(`${d.lessons} שיעורים · שיעור ${d.first}–${d.last}`, `${d.lessons} lessons · period ${d.first}–${d.last}`)}
                     </Typography>
                     {d.windows > 0 && (
-                      <Chip size="small" label={`${d.windows} חלון`}
+                      <Chip size="small" label={L(`${d.windows} חלון`, `${d.windows} gap`)}
                             sx={{ height: 18, fontSize: 10, background: 'rgba(245,158,11,0.15)', color: '#b45309' }} />
                     )}
                   </>
@@ -1238,7 +1247,7 @@ function SelectionDetailCard({ quality, viewMode, entries }: {
         {viewMode === 'teacher' && quality.has_day_off && (
           <Box sx={{ mt: 2, p: 1.25, background: 'grey.50', borderRadius: 1.5 }}>
             <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
-              יום חופש: {dayLabels[quality.day_off]}
+              {L('יום חופש', 'Day off')}: {dayLabels[quality.day_off]}
             </Typography>
           </Box>
         )}

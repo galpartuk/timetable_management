@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, Button, Chip, CircularProgress, Stack, Typography } from '@mui/material';
 import { Bolt as BoltIcon, Check as CheckIcon, Close as CloseIcon } from '@mui/icons-material';
 import type { ToolProposal } from './types';
@@ -14,6 +15,9 @@ interface Props {
  * The user must approve before the backend actually executes anything.
  */
 export function ToolPreview({ proposal, onApprove, onReject }: Props) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [working, setWorking] = useState<'approve' | 'reject' | null>(null);
   const handle = async (decision: 'approve' | 'reject', cb: () => any) => {
     setWorking(decision);
@@ -41,7 +45,7 @@ export function ToolPreview({ proposal, onApprove, onReject }: Props) {
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'warning.dark', mb: 0.25 }}>
-            דרושה אישור
+            {L('דרוש אישור', 'Approval required')}
           </Typography>
           <Chip size="small" label={proposal.name} sx={{ background: 'rgba(245,158,11,0.12)', color: 'warning.dark', fontSize: 11 }} />
         </Box>
@@ -80,7 +84,7 @@ export function ToolPreview({ proposal, onApprove, onReject }: Props) {
           onClick={() => handle('reject', onReject)}
           disabled={working !== null}
         >
-          ביטול
+          {L('ביטול', 'Cancel')}
         </Button>
         <Button
           size="small"
@@ -90,7 +94,7 @@ export function ToolPreview({ proposal, onApprove, onReject }: Props) {
           onClick={() => handle('approve', onApprove)}
           disabled={working !== null}
         >
-          אשר וביצוע
+          {L('אשר וביצוע', 'Approve & run')}
         </Button>
       </Stack>
     </Box>

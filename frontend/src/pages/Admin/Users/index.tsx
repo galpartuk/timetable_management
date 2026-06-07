@@ -15,14 +15,18 @@ import {
   getAdminUsers, updateAdminUser,
 } from '../../../api/client';
 
-const ROLES: { value: string; label: string }[] = [
-  { value: 'super_admin', label: 'מנהל ראשי' },
-  { value: 'admin', label: 'מנהל' },
-  { value: 'editor', label: 'עורך' },
-  { value: 'viewer', label: 'צופה' },
+const ROLES: { value: string; label: { he: string; en: string } }[] = [
+  { value: 'super_admin', label: { he: 'מנהל ראשי', en: 'Super admin' } },
+  { value: 'admin', label: { he: 'מנהל', en: 'Admin' } },
+  { value: 'editor', label: { he: 'עורך', en: 'Editor' } },
+  { value: 'viewer', label: { he: 'צופה', en: 'Viewer' } },
 ];
 
-const roleLabel = (r: string) => ROLES.find((x) => x.value === r)?.label ?? r;
+const roleLabel = (r: string, isRtl: boolean) => {
+  const role = ROLES.find((x) => x.value === r);
+  if (!role) return r;
+  return isRtl ? role.label.he : role.label.en;
+};
 
 const roleColor = (r: string): 'primary' | 'success' | 'warning' | 'default' => {
   if (r === 'super_admin') return 'primary';
@@ -193,7 +197,7 @@ export default function AdminUsersPage() {
                     <TableCell>
                       <Chip
                         size="small"
-                        label={roleLabel(u.role)}
+                        label={roleLabel(u.role, isRtl)}
                         color={roleColor(u.role)}
                         variant={u.role === 'super_admin' ? 'filled' : 'outlined'}
                       />
@@ -265,7 +269,7 @@ export default function AdminUsersPage() {
               fullWidth
             >
               {ROLES.map((r) => (
-                <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>
+                <MenuItem key={r.value} value={r.value}>{isRtl ? r.label.he : r.label.en}</MenuItem>
               ))}
             </TextField>
             <TextField
