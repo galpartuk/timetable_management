@@ -20,9 +20,10 @@ import {
   getTimetableByClass, getTimetableByTeacher,
   getClasses, getTeachers, deleteTimetable,
   getTimetableQuality, moveTimetableEntry, toggleEntryLock,
-  getCurrentDataSource, downloadImportFile, uploadExcel,
+  getCurrentDataSource, downloadImportFile,
   type TimetableQuality, type DataSource,
 } from '../../api/client';
+import ImportReview from '../../components/ImportReview';
 
 const SCHOOL_ID = 1;
 
@@ -71,7 +72,8 @@ export default function TimetablePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [quality, setQuality] = useState<TimetableQuality | null>(null);
   const [dataSource, setDataSource] = useState<DataSource | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [nowTs, setNowTs] = useState(Date.now());
   const [buildLog, setBuildLog] = useState('');
@@ -89,26 +91,24 @@ export default function TimetablePage() {
 
   useEffect(() => { loadDataSource(); }, []);
 
-  const handleUploadExcel = async (file: File) => {
+  // Picking a file opens the import dialog (preview → resolve teachers →
+  // confirm), the same flow as the Import page. Direct one-click commit is
+  // gone so the user always sees what will change.
+  const pickImportFile = (file: File) => {
     if (!(file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
       setError(isRtl ? 'יש לבחור קובץ אקסל (.xlsx)' : 'Please choose an Excel file (.xlsx)');
       return;
     }
-    setUploading(true);
     setError('');
-    try {
-      await uploadExcel(file, SCHOOL_ID);
-      // Refresh everything that depends on the loaded data.
-      await Promise.all([
-        loadDataSource(),
-        getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {}),
-        getTeachers().then((r) => setTeachers(r.data.results ?? [])).catch(() => {}),
-      ]);
-    } catch (e: any) {
-      setError(e.response?.data?.error || (isRtl ? 'הייבוא נכשל' : 'Import failed'));
-    } finally {
-      setUploading(false);
-    }
+    setPendingFile(file);
+  };
+
+  const refreshAfterImport = async () => {
+    await Promise.all([
+      loadDataSource(),
+      getClasses().then((r) => setClasses(r.data.results ?? [])).catch(() => {}),
+      getTeachers().then((r) => setTeachers(r.data.results ?? [])).catch(() => {}),
+    ]);
   };
 
   const handleDownloadExcel = async () => {
@@ -432,10 +432,29 @@ export default function TimetablePage() {
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleUploadExcel(f);
+          if (f) pickImportFile(f);
           e.target.value = '';
         }}
       />
+
+      {/* Import dialog — preview → resolve teachers → confirm, shared with the
+          Import page so the upload behaves the same everywhere. */}
+      <Dialog open={!!pendingFile} onClose={() => setPendingFile(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>{isRtl ? 'ייבוא נתונים מאקסל' : 'Import data from Excel'}</DialogTitle>
+        <DialogContent dividers>
+          {pendingFile && (
+            <>
+              <Typography sx={{ fontSize: 13, color: 'grey.600', mb: 1.5 }}>{pendingFile.name}</Typography>
+              <ImportReview
+                file={pendingFile}
+                schoolId={SCHOOL_ID}
+                onDone={async () => { setPendingFile(null); await refreshAfterImport(); }}
+                onCancel={() => setPendingFile(null)}
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
       {dataSource && (
         <Card sx={{ mb: 2.5 }} className="no-print">
           <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
