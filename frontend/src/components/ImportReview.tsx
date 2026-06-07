@@ -4,9 +4,7 @@ import {
   Box, Typography, Button, Alert, LinearProgress, Stack, Checkbox,
   FormControlLabel, Divider, RadioGroup, Radio, CircularProgress,
 } from '@mui/material';
-import {
-  Upload as UploadIcon, Assessment as AssessmentIcon,
-} from '@mui/icons-material';
+import { Upload as UploadIcon } from '@mui/icons-material';
 import { uploadExcel, type ImportResponse } from '../api/client';
 
 /**
@@ -76,20 +74,16 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
 
   return (
     <Box>
-      <FormControlLabel
-        sx={{ display: 'block', mb: 1 }}
-        control={<Checkbox size="small" checked={wipe} onChange={(e) => setWipe(e.target.checked)} disabled={busy} />}
-        label={
-          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
-            {L('מחק נתונים קיימים לפני הייבוא', 'Clear existing data before import')}
-          </Typography>
-        }
-      />
-
-      {previewing && <LinearProgress sx={{ mb: 2 }} />}
+      {previewing && !p && (
+        <Box sx={{ py: 1, mb: 1 }}>
+          <Typography sx={{ fontSize: 13, color: 'grey.600', mb: 1 }}>{L('מנתח…', 'Analyzing…')}</Typography>
+          <LinearProgress />
+        </Box>
+      )}
 
       {p && (
         <>
+          {previewing && <LinearProgress sx={{ mb: 1 }} />}
           <Typography sx={{ fontSize: 15, fontWeight: 700, mb: 1 }}>
             {L('סיכום תצוגה מקדימה', 'Preview summary')}
           </Typography>
@@ -185,23 +179,40 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
 
       {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
 
-      <Divider sx={{ my: 2 }} />
-      <Typography sx={{ fontSize: 12, color: 'grey.700', mb: 1.5 }}>
-        {L('לאחר אישור הנתונים ייכתבו לבסיס הנתונים. הפעולה אינה הפיכה',
-           'After confirming, the data is written to the database. This cannot be undone')}
-        {wipe && <strong>{L(' וכל הנתונים הקיימים יימחקו תחילה', ' and all existing data is deleted first')}</strong>}.
-      </Typography>
+      {p && (
+        <>
+          <Divider sx={{ my: 2 }} />
+          <Typography sx={{ fontSize: 12, color: 'grey.700', mb: 1.5 }}>
+            {L('לאחר אישור הנתונים ייכתבו לבסיס הנתונים. הפעולה אינה הפיכה',
+               'After confirming, the data is written to the database. This cannot be undone')}
+            {wipe && <strong>{L(' וכל הנתונים הקיימים יימחקו תחילה', ' and all existing data is deleted first')}</strong>}.
+          </Typography>
+        </>
+      )}
       {committing && <LinearProgress sx={{ mb: 1.5 }} />}
-      <Stack direction="row" spacing={1.5} sx={{ justifyContent: 'flex-end' }}>
-        <Button variant="outlined" onClick={onCancel} disabled={busy}>{t('data.cancel')}</Button>
-        <Button
-          variant="contained" size="large" color={wipe ? 'error' : 'primary'}
-          onClick={doCommit} disabled={busy || !p}
-          startIcon={committing ? <CircularProgress size={16} color="inherit" />
-            : previewing ? <AssessmentIcon /> : <UploadIcon />}
-        >
-          {committing ? t('import.uploading') : L('אשר וייבא', 'Confirm import')}
-        </Button>
+      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+        {/* The wipe option only appears once the preview is ready, so it is
+            interactive when shown and sits aligned with the action buttons. */}
+        {p ? (
+          <FormControlLabel
+            control={<Checkbox size="small" checked={wipe} onChange={(e) => setWipe(e.target.checked)} disabled={busy} />}
+            label={
+              <Typography sx={{ fontSize: 13 }}>
+                {L('מחק נתונים קיימים לפני הייבוא', 'Clear existing data before import')}
+              </Typography>
+            }
+          />
+        ) : <Box />}
+        <Stack direction="row" spacing={1.5}>
+          <Button variant="outlined" onClick={onCancel} disabled={committing}>{t('data.cancel')}</Button>
+          <Button
+            variant="contained" size="large" color={wipe ? 'error' : 'primary'}
+            onClick={doCommit} disabled={busy || !p}
+            startIcon={committing ? <CircularProgress size={16} color="inherit" /> : <UploadIcon />}
+          >
+            {committing ? t('import.uploading') : L('אשר וייבא', 'Confirm import')}
+          </Button>
+        </Stack>
       </Stack>
     </Box>
   );
