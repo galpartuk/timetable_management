@@ -57,32 +57,35 @@ const GROUP_TITLES: Record<SheetMeta['group'], string> = {
   admin: 'ניהול ובקרה',
 };
 
-type TabValue = 'import' | 'export' | 'gaps' | 'quality' | 'manage';
+type TabValue = 'export' | 'gaps' | 'quality' | 'manage';
 
 export default function ManagePage() {
-  const { t } = useTranslation();
-  void t;
-  const [tab, setTab] = useState<TabValue>('import');
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
+  const [tab, setTab] = useState<TabValue>('export');
 
   return (
     <Box>
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h2" sx={{ mb: 0.5 }}>ייבוא, ייצוא וניהול נתונים</Typography>
+        <Typography variant="h2" sx={{ mb: 0.5 }}>
+          {L('ייצוא וניהול נתונים', 'Export & Manage Data')}
+        </Typography>
         <Typography sx={{ color: 'grey.600', fontSize: 14 }}>
-          ייבא את הערכות שעות ההוראה מקובץ אקסל, צפה במצב הנתונים, ייצא נתונים, או נקה.
-          פעולות מחיקה הן בלתי-הפיכות.
+          {L(
+            'ייצא נתונים, צפה בפערי נתונים ובאיכות המערכת, או נקה נתונים. פעולות מחיקה הן בלתי-הפיכות. לייבוא קובץ אקסל עברו לעמוד "ייבוא".',
+            'Export data, review data gaps and schedule quality, or clear data. Deletions are irreversible. To import an Excel file, use the "Import" page.',
+          )}
         </Typography>
       </Box>
 
       <Box sx={{ display: 'inline-flex', gap: 0.5, padding: 0.5, background: 'grey.100', borderRadius: 3, mb: 3 }}>
-        <PillTab label="ייבוא Excel" active={tab === 'import'} onClick={() => setTab('import')} />
-        <PillTab label="פערי נתונים" active={tab === 'gaps'} onClick={() => setTab('gaps')} />
-        <PillTab label="איכות מערכת" active={tab === 'quality'} onClick={() => setTab('quality')} />
-        <PillTab label="ייצוא" active={tab === 'export'} onClick={() => setTab('export')} />
-        <PillTab label="ניהול נתונים" active={tab === 'manage'} onClick={() => setTab('manage')} danger />
+        <PillTab label={L('פערי נתונים', 'Data gaps')} active={tab === 'gaps'} onClick={() => setTab('gaps')} />
+        <PillTab label={L('איכות מערכת', 'Schedule quality')} active={tab === 'quality'} onClick={() => setTab('quality')} />
+        <PillTab label={L('ייצוא', 'Export')} active={tab === 'export'} onClick={() => setTab('export')} />
+        <PillTab label={L('ניהול נתונים', 'Data admin')} active={tab === 'manage'} onClick={() => setTab('manage')} danger />
       </Box>
 
-      {tab === 'import' && <ImportTab />}
       {tab === 'gaps' && <GapAnalysisTab />}
       {tab === 'quality' && <QualityTab />}
       {tab === 'export' && <ExportTab />}
@@ -584,330 +587,6 @@ function DangerLauncher({ op, timetables, blocked, onLaunch }: {
     >
       {op.buttonLabel}
     </Button>
-  );
-}
-
-// ── IMPORT TAB ────────────────────────────────────────────────────────────
-
-function ImportTab() {
-  const [file, setFile] = useState<File | null>(null);
-  const [wipeExisting, setWipeExisting] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [committing, setCommitting] = useState(false);
-  const [preview, setPreview] = useState<ImportResponse | null>(null);
-  const [commitResult, setCommitResult] = useState<ImportResponse | null>(null);
-  const [error, setError] = useState('');
-  // User identity decisions for ambiguous teachers: canonical name → id | 'new'.
-  const [resolutions, setResolutions] = useState<Record<string, number | 'new'>>({});
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const reset = () => {
-    setFile(null);
-    setPreview(null);
-    setCommitResult(null);
-    setResolutions({});
-    setError('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setFile(f);
-      setPreview(null);
-      setCommitResult(null);
-      setError('');
-    }
-  };
-
-  const doDryRun = async () => {
-    if (!file) return;
-    setPreviewing(true);
-    setError('');
-    setCommitResult(null);
-    try {
-      const res = await uploadExcel(file, 1, { dryRun: true, wipeExisting });
-      setPreview(res.data);
-      // Seed identity decisions from the suggested defaults.
-      const amb = res.data.preview?.teacher_resolutions?.ambiguous ?? [];
-      setResolutions(Object.fromEntries(amb.map((a) => [a.incoming, a.suggested])));
-    } catch (e: any) {
-      setError(e.response?.data?.error || 'תצוגה מקדימה נכשלה');
-    } finally {
-      setPreviewing(false);
-    }
-  };
-
-  const doCommit = async () => {
-    if (!file) return;
-    setCommitting(true);
-    setError('');
-    try {
-      const res = await uploadExcel(file, 1, { dryRun: false, wipeExisting, teacherOverrides: resolutions });
-      setCommitResult(res.data);
-      setPreview(null);
-    } catch (e: any) {
-      setError(e.response?.data?.error || 'הייבוא נכשל');
-    } finally {
-      setCommitting(false);
-    }
-  };
-
-  const p = preview?.preview;
-
-  return (
-    <Stack spacing={3}>
-      <Alert severity="info">
-        העלאת קובץ Excel בפורמט "הערכות לשנת הלימודים".
-        השלב הראשון הוא <strong>תצוגה מקדימה</strong> ללא שינוי במסד הנתונים —
-        רק לאחר אישור תועלה הגרסה לבסיס הנתונים.
-      </Alert>
-
-      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-
-      <Card>
-        <CardContent>
-          <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>1. בחר קובץ</Typography>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-            <Button
-              variant="outlined"
-              component="label"
-              startIcon={<UploadIcon />}
-              disabled={previewing || committing}
-            >
-              בחר קובץ .xlsx
-              <input
-                hidden
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx"
-                onChange={onPickFile}
-              />
-            </Button>
-            {file && (
-              <>
-                <Typography sx={{ fontSize: 14 }}>{file.name}</Typography>
-                <Typography sx={{ fontSize: 12, color: 'grey.500' }}>
-                  ({(file.size / 1024).toFixed(0)} KB)
-                </Typography>
-                <Button size="small" onClick={reset} disabled={previewing || committing}>
-                  נקה
-                </Button>
-              </>
-            )}
-          </Stack>
-
-          <FormControlLabel
-            sx={{ mt: 2, display: 'block' }}
-            control={
-              <Checkbox
-                size="small"
-                checked={wipeExisting}
-                onChange={(e) => setWipeExisting(e.target.checked)}
-                disabled={previewing || committing}
-              />
-            }
-            label={
-              <Box>
-                <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
-                  מחק נתונים קיימים לפני הייבוא
-                </Typography>
-                <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
-                  ימחק את כל המורים, המקצועות, שיבוצי ההוראה והתפקידים של בית הספר
-                  לפני ייבוא ה-Excel. הכיתות והגדרות נוספות נשארות.
-                </Typography>
-              </Box>
-            }
-          />
-
-          <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
-            <Button
-              variant="outlined"
-              startIcon={previewing ? <CircularProgress size={16} /> : <ReportIcon />}
-              onClick={doDryRun}
-              disabled={!file || previewing || committing}
-            >
-              תצוגה מקדימה
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
-
-      {p && (
-        <Card sx={{ borderColor: 'primary.light' }}>
-          <CardContent>
-            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
-              2. סיכום תצוגה מקדימה
-            </Typography>
-            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 2 }}>
-              <Stat label="גיליונות" value={p.sheets_seen.length} />
-              <Stat label="שורות שיבוצים" value={p.assignment_rows_total} />
-              <Stat label="שורות תפקידים" value={p.role_rows_total} />
-              <Stat label="מקצועות" value={p.subjects_distinct} />
-              <Stat label="מורים (ייחודיים)" value={p.teachers_distinct} />
-              <Stat label="שורות עם מורה" value={p.rows_with_teacher} />
-              <Stat label="שורות בקבוצות (pool)" value={p.pool_rows} />
-              <Stat label="שורות פתיחה מותנית" value={p.inactive_rows} />
-            </Stack>
-
-            {Object.keys(p.class_rows_per_grade || {}).length > 0 && (
-              <Box sx={{ mb: 1.5 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700' }}>
-                  שורות לפי שכבה
-                </Typography>
-                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
-                  {Object.entries(p.class_rows_per_grade).map(([g, n]) => (
-                    <Chip key={g} size="small" label={`${g}: ${n}`} />
-                  ))}
-                </Stack>
-              </Box>
-            )}
-
-            {p.diff && (
-              <Box sx={{ mb: 2, p: 1.5, background: 'rgba(79,70,229,0.04)', borderRadius: 2 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 700, mb: 1 }}>
-                  השוואה למצב הקיים בבסיס הנתונים
-                </Typography>
-                <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', mb: 1 }}>
-                  <DiffStat label="מורים חדשים" value={p.diff.new_teachers_count} tone="good" />
-                  <DiffStat label="מורים שיוסרו" value={p.diff.removed_teachers_count} tone={p.diff.removed_teachers_count > 0 ? 'warn' : 'good'} />
-                  <DiffStat label="מקצועות חדשים" value={p.diff.new_subjects.length} tone="good" />
-                  <DiffStat label="כיתות חדשות" value={p.diff.new_classes.length} tone="good" />
-                  <DiffStat label="שורות חדשות" value={p.diff.new_rows_count} tone="good" />
-                  <DiffStat label="שורות בלתי מעודכנות" value={p.diff.stale_rows_count} tone={p.diff.stale_rows_count > 0 ? 'warn' : 'good'} />
-                  <DiffStat label="שינויי שעות" value={p.diff.hours_changes_count} tone={p.diff.hours_changes_count > 0 ? 'warn' : 'good'} />
-                </Stack>
-                {p.diff.new_teachers.length > 0 && (
-                  <Typography sx={{ fontSize: 11, color: 'grey.700' }}>
-                    מורים חדשים: {p.diff.new_teachers.slice(0, 10).join(' · ')}
-                    {p.diff.new_teachers_count > 10 && ` · +${p.diff.new_teachers_count - 10}`}
-                  </Typography>
-                )}
-                {p.diff.hours_changes.length > 0 && (
-                  <Box sx={{ mt: 1 }}>
-                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: 'grey.700' }}>
-                      שינויי שעות:
-                    </Typography>
-                    {p.diff.hours_changes.slice(0, 5).map((c, i) => (
-                      <Typography key={i} sx={{ fontSize: 11, color: 'grey.700' }}>
-                        {c.sheet} R{c.row} ({c.teacher} / {c.subject}): {c.old_hours} → <strong>{c.new_hours}</strong>
-                      </Typography>
-                    ))}
-                  </Box>
-                )}
-              </Box>
-            )}
-
-            {p.warnings.length > 0 && (
-              <Box sx={{ mb: 1.5 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'warning.dark' }}>
-                  אזהרות ({p.warnings.length})
-                </Typography>
-                <Box sx={{ maxHeight: 160, overflow: 'auto', mt: 0.5, fontSize: 12 }}>
-                  {p.warnings.slice(0, 50).map((w, i) => (
-                    <Typography key={i} sx={{ fontSize: 12, color: 'grey.700' }}>
-                      • {w}
-                    </Typography>
-                  ))}
-                  {p.warnings.length > 50 && (
-                    <Typography sx={{ fontSize: 11, color: 'grey.500' }}>
-                      … +{p.warnings.length - 50} אזהרות נוספות
-                    </Typography>
-                  )}
-                </Box>
-              </Box>
-            )}
-
-            {p.errors.length > 0 && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>שגיאות:</Typography>
-                {p.errors.slice(0, 20).map((e, i) => (
-                  <Typography key={i} sx={{ fontSize: 12 }}>• {e}</Typography>
-                ))}
-              </Alert>
-            )}
-
-            {(p.teacher_resolutions?.ambiguous_count ?? 0) > 0 && (
-              <Box sx={{ mt: 1, mb: 1 }}>
-                <Divider sx={{ my: 2 }} />
-                <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 0.5 }}>
-                  זיהוי מורים
-                </Typography>
-                <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>
-                  {p.teacher_resolutions!.ambiguous_count} שמות שדורשים הכרעה — האם זה מורה
-                  קיים או חדש? בחרנו ברירת מחדל סבירה; שנו לפי הצורך.
-                </Typography>
-                <Stack spacing={1.5}>
-                  {p.teacher_resolutions!.ambiguous.map((amb) => (
-                    <Box key={amb.incoming} sx={{ p: 1.25, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
-                      <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 0.5 }}>
-                        "{amb.incoming}"
-                      </Typography>
-                      <RadioGroup
-                        value={String(resolutions[amb.incoming] ?? amb.suggested)}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setResolutions((prev) => ({
-                            ...prev,
-                            [amb.incoming]: v === 'new' ? 'new' : Number(v),
-                          }));
-                        }}
-                      >
-                        {amb.choices.map((ch) => (
-                          <FormControlLabel
-                            key={String(ch.value)}
-                            value={String(ch.value)}
-                            control={<Radio size="small" />}
-                            label={<Typography sx={{ fontSize: 13 }}>{ch.label}</Typography>}
-                          />
-                        ))}
-                      </RadioGroup>
-                    </Box>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-
-            <Divider sx={{ my: 2 }} />
-            <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 1.5 }}>
-              3. אישור ייבוא לבסיס הנתונים
-            </Typography>
-            <Typography sx={{ fontSize: 13, color: 'grey.700', mb: 1.5 }}>
-              לאחר אישור, הנתונים ייכתבו לבסיס הנתונים. הפעולה אינה הפיכה
-              {wipeExisting && (
-                <strong> ותמחק את כל הנתונים הקיימים לפני ההכנסה</strong>
-              )}.
-            </Typography>
-            <Button
-              variant="contained"
-              color={wipeExisting ? 'error' : 'primary'}
-              size="large"
-              startIcon={committing ? <CircularProgress size={16} color="inherit" /> : <CheckIcon />}
-              onClick={doCommit}
-              disabled={committing}
-            >
-              {committing ? 'מייבא…' : 'אשר ויבא לבסיס נתונים'}
-            </Button>
-            {committing && <LinearProgress sx={{ mt: 1.5 }} />}
-          </CardContent>
-        </Card>
-      )}
-
-      {commitResult && (
-        <Alert severity="success">
-          <Typography sx={{ fontSize: 14, fontWeight: 700 }}>
-            ✓ הייבוא הושלם בהצלחה
-          </Typography>
-          <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: 'wrap', fontSize: 13 }}>
-            <Box>מקצועות שנוספו: <strong>{commitResult.subjects_imported}</strong></Box>
-            <Box>מורים שנוספו: <strong>{commitResult.teachers_imported}</strong></Box>
-            <Box>כיתות שנוספו: <strong>{commitResult.classes_imported}</strong></Box>
-            <Box>שיבוצים: <strong>{commitResult.assignments_imported}</strong></Box>
-            <Box>תפקידים: <strong>{commitResult.roles_imported}</strong></Box>
-          </Stack>
-        </Alert>
-      )}
-    </Stack>
   );
 }
 
