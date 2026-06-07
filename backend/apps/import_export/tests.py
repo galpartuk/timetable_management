@@ -299,6 +299,22 @@ class CoverageTests(TestCase):
         z1 = next(c for c in cov['classes'] if c['class'] == 'ז1')
         self.assertEqual((z1['scheduled_hours'], z1['missing_hours'], z1['total_hours']), (3, 2, 5))
 
+    def test_assignment_preview_expands_pool_and_flags_missing_teacher(self):
+        import types
+        from apps.import_export.views import _compute_assignment_preview
+        parsed = types.SimpleNamespace(assignment_rows=[
+            types.SimpleNamespace(is_active=True, weekly_hours=Decimal('3'), teacher='דנה',
+                                  subject='מתמטיקה', classes=[('ז', 1), ('ז', 2)]),  # pooled
+            types.SimpleNamespace(is_active=True, weekly_hours=Decimal('2'), teacher='',
+                                  subject='תנך', classes=[('ז', 1)]),  # no teacher
+        ])
+        out = _compute_assignment_preview(parsed)
+        self.assertEqual(out['total'], 3)  # pool expanded to 2 + 1
+        math_z1 = next(r for r in out['rows'] if r['class'] == 'ז1' and r['subject'] == 'מתמטיקה')
+        self.assertEqual(math_z1['teacher'], 'דנה')
+        tanach = next(r for r in out['rows'] if r['subject'] == 'תנך')
+        self.assertEqual(tanach['teacher'], '')
+
 
 class TeacherNameSplitTests(TestCase):
     def test_split(self):
