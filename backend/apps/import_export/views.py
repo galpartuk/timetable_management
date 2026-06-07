@@ -168,6 +168,50 @@ def _compute_teacher_resolutions(parsed, school) -> dict:
     }
 
 
+def _compute_coverage(parsed) -> dict:
+    """Estimate how full the generated timetable will be, per class, from the
+    parsed rows — BEFORE committing. A lesson is "schedulable" only if its row
+    has a teacher; rows with a blank teacher cell can't be placed by the solver
+    and show up as a gap. Gives the user a rough "this is how it'll look" view
+    so missing teachers are caught at import time, not after generating.
+
+    Only active rows with hours > 0 count. Pooled/track rows are counted per
+    class, so totals are an estimate, not an exact slot count.
+    """
+    from collections import defaultdict
+    from .parser import _valid_canonical
+
+    scheduled: dict[str, float] = defaultdict(float)
+    missing: dict[str, float] = defaultdict(float)
+    for r in parsed.assignment_rows:
+        if not r.is_active:
+            continue
+        hrs = float(r.weekly_hours or 0)
+        if hrs <= 0:
+            continue
+        has_teacher = bool(_valid_canonical(r.teacher)) if r.teacher else False
+        for (g, n) in r.classes:
+            key = f'{g}{n}'
+            (scheduled if has_teacher else missing)[key] += hrs
+
+    classes = []
+    for key in set(scheduled) | set(missing):
+        s = round(scheduled.get(key, 0), 1)
+        m = round(missing.get(key, 0), 1)
+        classes.append({
+            'class': key, 'scheduled_hours': s, 'missing_hours': m,
+            'total_hours': round(s + m, 1),
+        })
+    # Worst gaps first so the user sees the problem classes at the top.
+    classes.sort(key=lambda c: (-c['missing_hours'], c['class']))
+    return {
+        'classes': classes,
+        'total_scheduled': round(sum(scheduled.values()), 1),
+        'total_missing': round(sum(missing.values()), 1),
+        'classes_with_gaps': sum(1 for c in classes if c['missing_hours'] > 0),
+    }
+
+
 def _summarize_parsed(parsed) -> dict:
     """Build a digest shown in the dry-run preview screen."""
     subjects = Counter(r.subject for r in parsed.assignment_rows)
@@ -263,6 +307,7 @@ def upload_excel(request):
         preview = _summarize_parsed(parsed)
         preview['diff'] = _diff_against_db(parsed, school)
         preview['teacher_resolutions'] = _compute_teacher_resolutions(parsed, school)
+        preview['coverage'] = _compute_coverage(parsed)
         import_log.preview_data = preview
         import_log.warnings = parsed.warnings
         import_log.errors = parsed.errors

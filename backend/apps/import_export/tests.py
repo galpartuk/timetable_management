@@ -282,6 +282,24 @@ class WipeEverythingTests(TestCase):
         self.assertTrue(School.objects.filter(id=school.id).exists())
 
 
+class CoverageTests(TestCase):
+    def test_coverage_splits_scheduled_vs_missing(self):
+        import types
+        from apps.import_export.views import _compute_coverage
+        parsed = types.SimpleNamespace(assignment_rows=[
+            types.SimpleNamespace(is_active=True, weekly_hours=Decimal('3'), teacher='דנה', classes=[('ז', 1)]),
+            types.SimpleNamespace(is_active=True, weekly_hours=Decimal('2'), teacher='', classes=[('ז', 1)]),
+            # inactive row is ignored
+            types.SimpleNamespace(is_active=False, weekly_hours=Decimal('4'), teacher='דנה', classes=[('ז', 1)]),
+        ])
+        cov = _compute_coverage(parsed)
+        self.assertEqual(cov['total_scheduled'], 3)
+        self.assertEqual(cov['total_missing'], 2)
+        self.assertEqual(cov['classes_with_gaps'], 1)
+        z1 = next(c for c in cov['classes'] if c['class'] == 'ז1')
+        self.assertEqual((z1['scheduled_hours'], z1['missing_hours'], z1['total_hours']), (3, 2, 5))
+
+
 class TeacherNameSplitTests(TestCase):
     def test_split(self):
         from apps.import_export.parser import _split_teacher_name
