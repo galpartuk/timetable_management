@@ -242,6 +242,46 @@ class NormalizedExportTests(TestCase):
         self.assertIn('class_overload', diag_codes)
 
 
+class WipeEverythingTests(TestCase):
+    """The full-reset bulk-delete op clears all imported/generated data but
+    keeps the school and its structural setup (time slots)."""
+
+    def test_wipe_everything(self):
+        from datetime import time
+        from django.contrib.auth.models import User
+        from rest_framework.test import APIClient
+        from apps.school.models import Grade, School, SchoolClass, TimeSlot
+        from apps.scheduling.models import Timetable
+        from apps.subjects.models import Subject, Teacher, TeachingAssignment
+
+        school = School.objects.create(name='בדיקת איפוס')
+        grade = Grade.objects.create(school=school, name='ז', level=7)
+        cls = SchoolClass.objects.create(grade=grade, number=1)
+        TimeSlot.objects.create(school=school, day=1, period=1,
+                                start_time=time(8, 0), end_time=time(8, 45))
+        subj = Subject.objects.create(school=school, name_he='מתמטיקה')
+        teacher = Teacher.objects.create(school=school, first_name='דנה')
+        TeachingAssignment.objects.create(subject=subj, teacher=teacher, school_class=cls,
+                                          weekly_hours=Decimal('3'))
+        Timetable.objects.create(school=school, name='tt')
+
+        client = APIClient()
+        client.force_authenticate(user=User.objects.create_user('admin2', password='x'))
+        resp = client.post('/api/manage/bulk-delete/',
+                           {'operation': 'wipe_everything', 'school_id': school.id},
+                           format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Teacher.objects.filter(school=school).count(), 0)
+        self.assertEqual(Subject.objects.filter(school=school).count(), 0)
+        self.assertEqual(TeachingAssignment.objects.filter(school_class__grade__school=school).count(), 0)
+        self.assertEqual(SchoolClass.objects.filter(grade__school=school).count(), 0)
+        self.assertEqual(Grade.objects.filter(school=school).count(), 0)
+        self.assertEqual(Timetable.objects.filter(school=school).count(), 0)
+        # Structural setup is preserved.
+        self.assertEqual(TimeSlot.objects.filter(school=school).count(), 1)
+        self.assertTrue(School.objects.filter(id=school.id).exists())
+
+
 class TeacherNameSplitTests(TestCase):
     def test_split(self):
         from apps.import_export.parser import _split_teacher_name
