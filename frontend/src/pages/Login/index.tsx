@@ -260,7 +260,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               border: '1px solid rgba(255,255,255,0.2)',
             }}
           >
-            {isRtl ? 'מ.ש' : 'TM'}
+            מ.ש
           </Box>
           <Typography sx={{ fontWeight: 700, fontSize: 17, letterSpacing: '-0.01em' }}>
             {t('app.title')}
@@ -349,7 +349,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 boxShadow: '0 8px 16px -6px rgba(79, 70, 229, 0.5)',
               }}
             >
-              {isRtl ? 'מ.ש' : 'TM'}
+              מ.ש
             </Box>
             <Typography sx={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em' }}>
               {t('app.title')}

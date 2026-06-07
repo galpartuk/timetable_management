@@ -119,7 +119,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
               lineHeight: 1,
             }}
           >
-            {i18n.language === 'he' ? 'מ.ש' : 'TM'}
+            מ.ש
           </Box>
           <Box sx={{ minWidth: 0 }}>
             <Typography sx={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2 }} noWrap>
