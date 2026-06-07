@@ -108,6 +108,38 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
             </Box>
           )}
 
+          {p.coverage && (
+            <Box sx={{ mb: 2 }}>
+              <Divider sx={{ my: 2 }} />
+              <Typography sx={{ fontSize: 15, fontWeight: 700, mb: 0.5 }}>
+                {L('כיסוי צפוי במערכת', 'Expected timetable coverage')}
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: 'grey.700', mb: 1 }}>
+                {L(
+                  `${p.coverage.total_scheduled} ש"ש ישובצו · ${p.coverage.total_missing} ש"ש לא ישובצו (אין מורה) · ${p.coverage.classes_with_gaps} כיתות עם פערים`,
+                  `${p.coverage.total_scheduled}h schedulable · ${p.coverage.total_missing}h can't be placed (no teacher) · ${p.coverage.classes_with_gaps} classes with gaps`,
+                )}
+              </Typography>
+              <Box sx={{ maxHeight: 220, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1.5 }}>
+                {p.coverage.classes.map((c) => (
+                  <Stack key={c.class} direction="row" sx={{ alignItems: 'center', gap: 1, px: 1, py: 0.5, borderBottom: '1px solid', borderColor: 'grey.100' }}>
+                    <Typography sx={{ fontSize: 13, fontWeight: 600, minWidth: 48 }}>{c.class}</Typography>
+                    <Box sx={{ flex: 1, height: 8, borderRadius: 1, bgcolor: 'grey.200', overflow: 'hidden', display: 'flex' }}>
+                      <Box sx={{ width: `${c.total_hours ? (c.scheduled_hours / c.total_hours) * 100 : 0}%`, bgcolor: '#10b981' }} />
+                      <Box sx={{ width: `${c.total_hours ? (c.missing_hours / c.total_hours) * 100 : 0}%`, bgcolor: '#f43f5e' }} />
+                    </Box>
+                    <Typography sx={{ fontSize: 12, minWidth: 92, textAlign: isRtl ? 'left' : 'right', color: 'grey.700' }}>
+                      {c.scheduled_hours}/{c.total_hours}
+                      {c.missing_hours > 0 && (
+                        <Box component="span" sx={{ color: 'error.main', fontWeight: 700 }}> (−{c.missing_hours})</Box>
+                      )}
+                    </Typography>
+                  </Stack>
+                ))}
+              </Box>
+            </Box>
+          )}
+
           {(p.teacher_resolutions?.ambiguous_count ?? 0) > 0 && (
             <Box sx={{ mb: 1 }}>
               <Divider sx={{ my: 2 }} />

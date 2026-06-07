@@ -320,6 +320,12 @@ export interface ImportPreview {
     ambiguous_count: number;
     auto_matched_count: number;
   };
+  coverage?: {
+    classes: Array<{ class: string; scheduled_hours: number; missing_hours: number; total_hours: number }>;
+    total_scheduled: number;
+    total_missing: number;
+    classes_with_gaps: number;
+  };
 }
 
 export interface ImportResponse {
