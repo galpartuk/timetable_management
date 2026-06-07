@@ -12,7 +12,8 @@ import {
   getTeacherTags, createTeacherTag, updateTeacherTag, deleteTeacherTag,
   setTagMembers, bulkSetDayOff,
   getSubjects, createSubject, updateSubject, deleteSubject,
-  getClasses, getAssignments, uploadDaysOff,
+  getClasses, getAssignments, createAssignment, updateAssignment, deleteAssignment,
+  uploadDaysOff,
 } from '../../api/client';
 
 const DAY_OPTIONS = [
@@ -42,6 +43,7 @@ export default function DataEntry() {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [tags, setTags] = useState<any[]>([]);
   const [editDialog, setEditDialog] = useState<{ type: string; data: any } | null>(null);
+  const [onlyMissingTeacher, setOnlyMissingTeacher] = useState(false);
   const isRtl = i18n.language === 'he';
 
   const loadData = () => {
@@ -76,6 +78,28 @@ export default function DataEntry() {
     else await createSubject({ ...data, school: 1 });
     setEditDialog(null);
     loadData();
+  };
+
+  const handleSaveAssignment = async (data: any) => {
+    const payload = {
+      teacher: data.teacher || null,
+      subject: data.subject,
+      school_class: data.school_class,
+      weekly_hours: data.weekly_hours,
+      is_active: data.is_active,
+      notes: data.notes ?? '',
+    };
+    if (data.id) await updateAssignment(data.id, { ...data, ...payload });
+    else await createAssignment(payload);
+    setEditDialog(null);
+    loadData();
+  };
+
+  const handleDeleteAssignment = async (id: number) => {
+    if (confirm(t('data.confirmDelete'))) {
+      await deleteAssignment(id);
+      loadData();
+    }
   };
 
   const handleQuickDayOff = async (teacher: any, dayOff: number | null) => {
@@ -495,49 +519,75 @@ export default function DataEntry() {
       )}
 
       {tab === 'assignments' && (
-        <Card>
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>{t('assignment.teacher')}</TableCell>
-                  <TableCell>{t('assignment.subject')}</TableCell>
-                  <TableCell>{t('assignment.class')}</TableCell>
-                  <TableCell>{t('assignment.weeklyHours')}</TableCell>
-                  <TableCell>{t('assignment.notes')}</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {assignments.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell>
-                      <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{a.teacher_name}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography sx={{ fontSize: 14 }}>{a.subject_name}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography sx={{ fontSize: 14 }}>{a.class_name}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography className="tabular-nums" sx={{ fontWeight: 600 }}>{a.weekly_hours}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography sx={{ fontSize: 13, color: 'grey.600' }}>{a.notes}</Typography>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {assignments.length === 0 && (
+        <>
+          <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={() => setEditDialog({ type: 'assignment', data: {
+                teacher: null, subject: '', school_class: '', weekly_hours: 1, is_active: true, notes: '',
+              } })}
+            >
+              {t('data.add')} {t('data.assignments')}
+            </Button>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={onlyMissingTeacher} onChange={(e) => setOnlyMissingTeacher(e.target.checked)} />}
+              label={<Typography sx={{ fontSize: 13 }}>{isRtl ? 'רק ללא מורה' : 'Only missing teacher'}</Typography>}
+            />
+          </Stack>
+          <Card>
+            <TableContainer>
+              <Table>
+                <TableHead>
                   <TableRow>
-                    <TableCell colSpan={5} sx={{ borderBottom: 0 }}>
-                      <EmptyTable title={t('data.noData')} hint={isRtl ? 'השיבוצים יופיעו כאן' : 'Assignments will appear here'} />
-                    </TableCell>
+                    <TableCell>{t('assignment.teacher')}</TableCell>
+                    <TableCell>{t('assignment.subject')}</TableCell>
+                    <TableCell>{t('assignment.class')}</TableCell>
+                    <TableCell>{t('assignment.weeklyHours')}</TableCell>
+                    <TableCell>{t('assignment.notes')}</TableCell>
+                    <TableCell />
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Card>
+                </TableHead>
+                <TableBody>
+                  {assignments.filter((a) => !onlyMissingTeacher || !a.teacher).map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell>
+                        {a.teacher ? (
+                          <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{a.teacher_name}</Typography>
+                        ) : (
+                          <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'error.main' }}>
+                            {isRtl ? '(אין מורה)' : '(no teacher)'}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell><Typography sx={{ fontSize: 14 }}>{a.subject_name}</Typography></TableCell>
+                      <TableCell><Typography sx={{ fontSize: 14 }}>{a.class_name}</Typography></TableCell>
+                      <TableCell><Typography className="tabular-nums" sx={{ fontWeight: 600 }}>{a.weekly_hours}</Typography></TableCell>
+                      <TableCell><Typography sx={{ fontSize: 13, color: 'grey.600' }}>{a.notes}</Typography></TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+                          <IconButton size="small" onClick={() => setEditDialog({ type: 'assignment', data: a })}>
+                            <Edit fontSize="small" />
+                          </IconButton>
+                          <IconButton size="small" onClick={() => handleDeleteAssignment(a.id)} sx={{ color: 'grey.500', '&:hover': { color: 'error.main' } }}>
+                            <Delete fontSize="small" />
+                          </IconButton>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {assignments.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ borderBottom: 0 }}>
+                        <EmptyTable title={t('data.noData')} hint={isRtl ? 'השיבוצים יופיעו כאן' : 'Assignments will appear here'} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Card>
+        </>
       )}
 
       {editDialog?.type === 'teacher' && (
@@ -569,7 +619,75 @@ export default function DataEntry() {
           onClose={() => setEditDialog(null)}
         />
       )}
+      {editDialog?.type === 'assignment' && (
+        <AssignmentDialog
+          data={editDialog.data}
+          teachers={teachers}
+          subjects={subjects}
+          classes={classes}
+          onSave={handleSaveAssignment}
+          onClose={() => setEditDialog(null)}
+        />
+      )}
     </Box>
+  );
+}
+
+function AssignmentDialog({ data, teachers, subjects, classes, onSave, onClose }: {
+  data: any; teachers: any[]; subjects: any[]; classes: any[];
+  onSave: (d: any) => void; onClose: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const [form, setForm] = useState(data);
+  const valid = form.subject && form.school_class && Number(form.weekly_hours) > 0;
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>{data.id ? t('data.edit') : t('data.add')} {t('data.assignments')}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField
+            select fullWidth label={t('assignment.subject')} value={form.subject ?? ''}
+            onChange={(e) => setForm({ ...form, subject: Number(e.target.value) })}
+          >
+            {subjects.map((s) => <MenuItem key={s.id} value={s.id}>{s.name_he}</MenuItem>)}
+          </TextField>
+          <TextField
+            select fullWidth label={t('assignment.class')} value={form.school_class ?? ''}
+            onChange={(e) => setForm({ ...form, school_class: Number(e.target.value) })}
+          >
+            {classes.map((c) => (
+              <MenuItem key={c.id} value={c.id}>{c.display_name ?? `${c.grade_name}${c.number}`}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select fullWidth label={t('assignment.teacher')} value={form.teacher ?? ''}
+            onChange={(e) => setForm({ ...form, teacher: e.target.value === '' ? null : Number(e.target.value) })}
+          >
+            <MenuItem value="">{isRtl ? '— ללא מורה —' : '— no teacher —'}</MenuItem>
+            {teachers.map((tc) => (
+              <MenuItem key={tc.id} value={tc.id}>{tc.first_name} {tc.last_name}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            fullWidth type="number" label={t('assignment.weeklyHours')} value={form.weekly_hours ?? 0}
+            onChange={(e) => setForm({ ...form, weekly_hours: e.target.value })}
+          />
+          <FormControlLabel
+            control={<Checkbox checked={!!form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />}
+            label={<Typography sx={{ fontSize: 14 }}>{isRtl ? 'פעיל (ישובץ במערכת)' : 'Active (will be scheduled)'}</Typography>}
+          />
+          <TextField
+            fullWidth label={t('assignment.notes')} value={form.notes ?? ''}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} variant="text">{t('data.cancel')}</Button>
+        <Button variant="contained" onClick={() => onSave(form)} disabled={!valid}>{t('data.save')}</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
