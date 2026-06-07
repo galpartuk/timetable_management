@@ -154,6 +154,16 @@ export default function TimetablePage() {
   }, [selectedTT, teacherParam, classParam]);
   void setSearchParams;
 
+  // Default to the first class/teacher (and recover from a stale selection,
+  // e.g. after a wipe-import gives classes new IDs) so a freshly built or
+  // freshly loaded timetable shows a populated grid instead of an empty one.
+  useEffect(() => {
+    const list = viewMode === 'class' ? classes : teachers;
+    if (!list.length) return;
+    if (selectedId && list.some((x) => x.id === selectedId)) return;
+    setSelectedId(list[0].id);
+  }, [classes, teachers, viewMode, selectedId]);
+
   useEffect(() => {
     if (!selectedTT) {
       setQuality(null);
@@ -567,7 +577,7 @@ export default function TimetablePage() {
             <ToggleButtonGroup
               value={viewMode}
               exclusive
-              onChange={(_, v) => v && setViewMode(v)}
+              onChange={(_, v) => { if (v && v !== viewMode) { setViewMode(v); setSelectedId(''); } }}
               size="small"
             >
               <ToggleButton value="class">{t('timetable.viewByClass')}</ToggleButton>
