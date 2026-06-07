@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box, Typography, Button, Alert, LinearProgress, Stack, Checkbox,
-  FormControlLabel, Divider, RadioGroup, Radio, CircularProgress,
+  FormControlLabel, Divider, RadioGroup, Radio, CircularProgress, TextField,
 } from '@mui/material';
 import { Upload as UploadIcon } from '@mui/icons-material';
 import { uploadExcel, type ImportResponse } from '../api/client';
@@ -30,6 +30,8 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState('');
+  const [showAssignments, setShowAssignments] = useState(false);
+  const [query, setQuery] = useState('');
 
   // (Re)run the dry-run whenever the file or the wipe flag changes, so the
   // comparison numbers reflect what the commit will actually do.
@@ -71,6 +73,11 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
 
   const p = preview?.preview;
   const busy = previewing || committing;
+  const ap = p?.assignments_preview;
+  const q = query.trim();
+  const filteredAssignments = (ap?.rows ?? []).filter(
+    (r) => !q || r.class.includes(q) || r.subject.includes(q) || r.teacher.includes(q),
+  );
 
   return (
     <Box>
@@ -137,6 +144,57 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
                   </Stack>
                 ))}
               </Box>
+            </Box>
+          )}
+
+          {ap && (
+            <Box sx={{ mb: 2 }}>
+              <Divider sx={{ my: 2 }} />
+              <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
+                  {L('מורים לפי כיתה ומקצוע', 'Teachers by class & subject')} ({ap.total})
+                </Typography>
+                <Button size="small" onClick={() => setShowAssignments((s) => !s)}>
+                  {showAssignments ? L('הסתר', 'Hide') : L('הצג לבדיקה', 'Show & verify')}
+                </Button>
+              </Stack>
+              {showAssignments && (
+                <>
+                  <TextField
+                    size="small" fullWidth value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={L('סינון לפי כיתה / מקצוע / מורה', 'Filter by class / subject / teacher')}
+                    sx={{ mb: 1 }}
+                  />
+                  <Box sx={{ maxHeight: 300, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1.5 }}>
+                    <Stack direction="row" sx={{ position: 'sticky', top: 0, bgcolor: 'grey.100', px: 1, py: 0.5, fontSize: 11, fontWeight: 700 }}>
+                      <Box sx={{ minWidth: 52 }}>{L('כיתה', 'Class')}</Box>
+                      <Box sx={{ flex: 1 }}>{L('מקצוע', 'Subject')}</Box>
+                      <Box sx={{ flex: 1 }}>{L('מורה', 'Teacher')}</Box>
+                      <Box sx={{ minWidth: 36, textAlign: isRtl ? 'left' : 'right' }}>{L('ש"ש', 'Hrs')}</Box>
+                    </Stack>
+                    {filteredAssignments.slice(0, 400).map((a, i) => (
+                      <Stack key={i} direction="row" sx={{ px: 1, py: 0.4, borderTop: '1px solid', borderColor: 'grey.100', fontSize: 12, opacity: a.active ? 1 : 0.5 }}>
+                        <Box sx={{ minWidth: 52, fontWeight: 600 }}>{a.class}</Box>
+                        <Box sx={{ flex: 1 }}>{a.subject}</Box>
+                        <Box sx={{ flex: 1, color: a.teacher ? 'text.primary' : 'error.main', fontWeight: a.teacher ? 400 : 700 }}>
+                          {a.teacher || L('(אין מורה)', '(no teacher)')}
+                        </Box>
+                        <Box sx={{ minWidth: 36, textAlign: isRtl ? 'left' : 'right' }}>{a.hours}</Box>
+                      </Stack>
+                    ))}
+                    {filteredAssignments.length === 0 && (
+                      <Typography sx={{ fontSize: 12, color: 'grey.500', p: 1 }}>{L('אין תוצאות', 'No matches')}</Typography>
+                    )}
+                  </Box>
+                  {filteredAssignments.length > 400 && (
+                    <Typography sx={{ fontSize: 11, color: 'grey.500', mt: 0.5 }}>
+                      {L(`מוצגות 400 מתוך ${filteredAssignments.length} — צמצמו עם הסינון`,
+                         `Showing 400 of ${filteredAssignments.length} — narrow with the filter`)}
+                    </Typography>
+                  )}
+                </>
+              )}
             </Box>
           )}
 

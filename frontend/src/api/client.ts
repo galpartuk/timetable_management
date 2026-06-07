@@ -326,6 +326,11 @@ export interface ImportPreview {
     total_missing: number;
     classes_with_gaps: number;
   };
+  assignments_preview?: {
+    rows: Array<{ class: string; subject: string; teacher: string; hours: number; active: boolean }>;
+    total: number;
+    truncated: boolean;
+  };
 }
 
 export interface ImportResponse {

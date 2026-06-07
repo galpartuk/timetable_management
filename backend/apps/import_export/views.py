@@ -212,6 +212,28 @@ def _compute_coverage(parsed) -> dict:
     }
 
 
+def _compute_assignment_preview(parsed, limit: int = 3000) -> dict:
+    """Flat 'who teaches what to whom' list from the parsed rows, so the user
+    can verify the class → subject → teacher mapping before committing. Pooled
+    rows are expanded to one entry per class. The teacher is the canonical name
+    the import will set (blank = no teacher in the file)."""
+    from .parser import _valid_canonical
+
+    rows = []
+    for r in parsed.assignment_rows:
+        teacher = (_valid_canonical(r.teacher) or '') if r.teacher else ''
+        for (g, n) in r.classes:
+            rows.append({
+                'class': f'{g}{n}',
+                'subject': r.subject,
+                'teacher': teacher,
+                'hours': float(r.weekly_hours or 0),
+                'active': bool(r.is_active),
+            })
+    rows.sort(key=lambda x: (x['class'], x['subject'], x['teacher']))
+    return {'rows': rows[:limit], 'total': len(rows), 'truncated': len(rows) > limit}
+
+
 def _summarize_parsed(parsed) -> dict:
     """Build a digest shown in the dry-run preview screen."""
     subjects = Counter(r.subject for r in parsed.assignment_rows)
@@ -308,6 +330,7 @@ def upload_excel(request):
         preview['diff'] = _diff_against_db(parsed, school)
         preview['teacher_resolutions'] = _compute_teacher_resolutions(parsed, school)
         preview['coverage'] = _compute_coverage(parsed)
+        preview['assignments_preview'] = _compute_assignment_preview(parsed)
         import_log.preview_data = preview
         import_log.warnings = parsed.warnings
         import_log.errors = parsed.errors
