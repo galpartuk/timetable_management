@@ -278,6 +278,32 @@ def _summarize_parsed(parsed) -> dict:
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser])
+def clean_excel(request):
+    """Take an uploaded (messy) Excel and return a cleaned, re-importable copy
+    — normalized teacher names, consistent columns, one sheet per subject, with
+    missing-teacher rows flagged and a 'בדיקה' summary. No DB writes."""
+    from .exporter import build_cleaned_workbook
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'לא נבחר קובץ'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        parsed = analyze(file, file_name=file.name)
+        wb = build_cleaned_workbook(parsed)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = 'attachment; filename="cleaned_timetable.xlsx"'
+    return response
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser])
 def upload_excel(request):
     """Parse + commit. If ``dry_run=true``, only the preview is built and
     the row is stored with status=PREVIEW for the FE to confirm later.

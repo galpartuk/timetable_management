@@ -5,7 +5,7 @@ import {
   FormControlLabel, Divider, RadioGroup, Radio, CircularProgress, TextField,
 } from '@mui/material';
 import { Upload as UploadIcon } from '@mui/icons-material';
-import { uploadExcel, type ImportResponse } from '../api/client';
+import { uploadExcel, cleanExcel, type ImportResponse } from '../api/client';
 
 /**
  * Shared import flow: given an already-chosen file, runs a dry-run preview,
@@ -32,6 +32,27 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
   const [error, setError] = useState('');
   const [showAssignments, setShowAssignments] = useState(false);
   const [query, setQuery] = useState('');
+  const [cleaning, setCleaning] = useState(false);
+
+  const doCleanDownload = async () => {
+    setCleaning(true);
+    setError('');
+    try {
+      const res = await cleanExcel(file);
+      const url = URL.createObjectURL(new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cleaned_timetable.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(L('ניקוי הקובץ נכשל', 'Cleaning the file failed'));
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   // (Re)run the dry-run whenever the file or the wipe flag changes, so the
   // comparison numbers reflect what the commit will actually do.
@@ -81,6 +102,18 @@ export default function ImportReview({ file, schoolId = 1, onDone, onCancel }: {
 
   return (
     <Box>
+      <Box sx={{ mb: 2, p: 1.25, borderRadius: 1.5, border: '1px dashed', borderColor: 'primary.light', bgcolor: 'rgba(79,70,229,0.03)' }}>
+        <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+          <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
+            {L('רוצים גרסה מסודרת לתיקון לפני הייבוא? הורידו אקסל נקי (מורים מנורמלים, שורות חסרות מורה מסומנות).',
+               'Want a tidied copy to fix before importing? Download a cleaned Excel (normalized teachers, missing-teacher rows flagged).')}
+          </Typography>
+          <Button size="small" variant="outlined" onClick={doCleanDownload} disabled={cleaning}>
+            {cleaning ? L('מנקה…', 'Cleaning…') : L('הורד אקסל נקי', 'Download cleaned Excel')}
+          </Button>
+        </Stack>
+      </Box>
+
       {previewing && !p && (
         <Box sx={{ py: 1, mb: 1 }}>
           <Typography sx={{ fontSize: 13, color: 'grey.600', mb: 1 }}>{L('מנתח…', 'Analyzing…')}</Typography>

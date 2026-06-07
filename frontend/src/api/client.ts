@@ -365,6 +365,17 @@ export const uploadExcel = (file: File, schoolId: number, opts: {
   });
 };
 
+// Clean a messy Excel into a normalized, re-importable copy (no DB writes).
+// Returns an .xlsx blob.
+export const cleanExcel = (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/import/clean/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'blob',
+  });
+};
+
 export const uploadDaysOff = (file: File, schoolId: number) => {
   const formData = new FormData();
   formData.append('file', file);

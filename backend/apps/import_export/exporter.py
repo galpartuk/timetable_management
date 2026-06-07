@@ -521,6 +521,119 @@ def _build_roundtrip_haarachot(wb: Workbook, spec: Dict[str, Any]) -> None:
         _autosize(ws)
 
 
+def build_cleaned_workbook(parsed) -> Workbook:
+    """Turn a messy uploaded workbook (already parsed into a ParsedWorkbook)
+    into a clean, re-importable one — WITHOUT touching the database.
+
+    For each subject it emits a standard sheet (header in row 3, one row per
+    assignment), normalizing teacher names (canonical first+last) and class
+    labels, carrying roles into a תפקידים sheet, and flagging every row that is
+    missing a teacher (those won't be scheduled). A 'בדיקה' summary sheet lists
+    the gaps to fix. The user fills in the blanks and re-imports.
+    """
+    from collections import OrderedDict
+    from apps.import_export.parser import _canonicalize_teacher_name, _split_teacher_name
+
+    wb = Workbook()
+    default = wb.active
+
+    SUBJECT_HEADERS = ['כיתה', 'סוג כיתה', 'שם המורה המלמד', 'שעות הוראה',
+                       'שעות גמול בגרות', 'סמל שאלון בגרות', 'הערות']
+    MISSING_FILL = PatternFill('solid', fgColor='FDE2E2')  # light red
+
+    def _clean_teacher(raw: str) -> str:
+        canon = _canonicalize_teacher_name(raw) if raw else ''
+        if not canon:
+            return ''
+        first, last = _split_teacher_name(canon)
+        return f'{first} {last}'.strip()
+
+    def _class_label(classes) -> str:
+        return ','.join(f'{g}{n}' for (g, n) in classes)
+
+    by_subject: "OrderedDict[str, list]" = OrderedDict()
+    for r in parsed.assignment_rows:
+        by_subject.setdefault(r.subject or 'ללא מקצוע', []).append(r)
+
+    missing: list[tuple[str, str]] = []   # (subject, class label)
+    used_names: set[str] = set()
+
+    for subject, rows in by_subject.items():
+        name = (subject or 'מקצוע')[:31] or 'מקצוע'
+        base, k = name, 2
+        while name in used_names:
+            name = f'{base[:28]}_{k}'
+            k += 1
+        used_names.add(name)
+        ws = wb.create_sheet(name)
+        ws['B1'] = subject
+        ws['B1'].font = Font(bold=True, size=13)
+        for c, h in enumerate(SUBJECT_HEADERS, start=1):
+            cell = ws.cell(row=3, column=c, value=h)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+        row_i = 4
+        for r in rows:
+            teacher = _clean_teacher(r.teacher)
+            note = r.notes or ''
+            if not teacher:
+                note = (note + ' | ' if note else '') + '⚠ חסר מורה — יש להשלים'
+                missing.append((subject, _class_label(r.classes)))
+            ws.cell(row=row_i, column=1, value=_class_label(r.classes))
+            ws.cell(row=row_i, column=2, value=r.class_type_raw or '')
+            tcell = ws.cell(row=row_i, column=3, value=teacher)
+            if not teacher:
+                tcell.fill = MISSING_FILL
+            ws.cell(row=row_i, column=4, value=float(r.weekly_hours) if r.weekly_hours is not None else None)
+            ws.cell(row=row_i, column=5, value=float(r.bagrut_hours) if r.bagrut_hours is not None else None)
+            ws.cell(row=row_i, column=6, value=r.bagrut_code or '')
+            ws.cell(row=row_i, column=7, value=note)
+            row_i += 1
+        _autosize(ws)
+
+    # תפקידים
+    if parsed.role_rows:
+        ws = wb.create_sheet('תפקידים')
+        role_headers = ['שם תפקיד', 'הקשר', 'תיאור', 'מורה', 'שעות שבועיות', 'גמול תפקיד', 'חובת הוראה']
+        for c, h in enumerate(role_headers, start=1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+        for i, rr in enumerate(parsed.role_rows, start=2):
+            ws.cell(row=i, column=1, value=rr.role_title)
+            ws.cell(row=i, column=2, value=rr.context)
+            ws.cell(row=i, column=3, value=rr.description)
+            ws.cell(row=i, column=4, value=_clean_teacher(rr.teacher))
+            ws.cell(row=i, column=5, value=float(rr.weekly_hours) if rr.weekly_hours is not None else None)
+            ws.cell(row=i, column=6, value=float(rr.stipend_fraction) if rr.stipend_fraction is not None else None)
+            ws.cell(row=i, column=7, value=float(rr.must_teach_hours) if rr.must_teach_hours is not None else None)
+        _autosize(ws)
+
+    # בדיקה (summary of gaps) — placed first so the user sees it on open.
+    summary = wb.create_sheet('בדיקה', 0)
+    summary['A1'] = 'סיכום בדיקה — מה צריך להשלים'
+    summary['A1'].font = Font(bold=True, size=14)
+    summary['A3'] = 'מקצועות'
+    summary['B3'] = len(by_subject)
+    summary['A4'] = 'שורות שיבוץ'
+    summary['B4'] = sum(len(v) for v in by_subject.values())
+    summary['A5'] = 'שיעורים ללא מורה (להשלמה)'
+    summary['B5'] = len(missing)
+    summary['A5'].font = summary['B5'].font = Font(bold=True, color='B91C1C')
+    summary['A7'] = 'מקצוע'
+    summary['B7'] = 'כיתה'
+    summary['A7'].font = summary['B7'].font = HEADER_FONT
+    summary['A7'].fill = summary['B7'].fill = HEADER_FILL
+    for i, (subj, cls) in enumerate(missing[:1000], start=8):
+        summary.cell(row=i, column=1, value=subj)
+        summary.cell(row=i, column=2, value=cls)
+    _autosize(summary)
+
+    if default.title == 'Sheet':
+        wb.remove(default)
+    return wb
+
+
 # ── registry ──────────────────────────────────────────────────────────────
 SHEET_BUILDERS: Dict[str, Callable[[Workbook, Dict[str, Any]], None]] = {
     'timetable_by_class': _build_timetable_by_class,
