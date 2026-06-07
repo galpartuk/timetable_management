@@ -1,5 +1,6 @@
 import { Box, Divider, Drawer, Fab, FormControlLabel, IconButton, Menu, MenuItem, Switch, Tooltip, Typography } from '@mui/material';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   AutoAwesome as SparkleIcon,
   Close as CloseIcon,
@@ -15,15 +16,15 @@ export { AiAssistantProvider, useAiAssistantContext, useAiAssistant } from './Ai
 
 const PANEL_WIDTH = 440;
 
-const MODULE_TITLES: Record<string, string> = {
-  global: 'עוזר חכם',
-  timetable: 'עוזר מערכת השעות',
-  data: 'עוזר ניהול הנתונים',
-  constraints: 'עוזר אילוצים',
-  import: 'עוזר ייבוא',
-  admin_users: 'עוזר ניהול משתמשים',
-  admin_audit: 'עוזר יומני ביקורת',
-  dashboard: 'עוזר לוח בקרה',
+const MODULE_TITLES: Record<string, { he: string; en: string }> = {
+  global: { he: 'עוזר חכם', en: 'Smart Assistant' },
+  timetable: { he: 'עוזר מערכת השעות', en: 'Timetable Assistant' },
+  data: { he: 'עוזר ניהול הנתונים', en: 'Data Management Assistant' },
+  constraints: { he: 'עוזר אילוצים', en: 'Constraints Assistant' },
+  import: { he: 'עוזר ייבוא', en: 'Import Assistant' },
+  admin_users: { he: 'עוזר ניהול משתמשים', en: 'User Management Assistant' },
+  admin_audit: { he: 'עוזר יומני ביקורת', en: 'Audit Logs Assistant' },
+  dashboard: { he: 'עוזר לוח בקרה', en: 'Dashboard Assistant' },
 };
 
 /**
@@ -35,14 +36,18 @@ const MODULE_TITLES: Record<string, string> = {
  */
 export default function AiAssistant() {
   const { state: { ctx, isOpen, autoApprove }, close, open, setAutoApprove, requestClear } = useAiAssistant();
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null);
-  const title = MODULE_TITLES[ctx.module] ?? MODULE_TITLES.global;
+  const titleEntry = MODULE_TITLES[ctx.module] ?? MODULE_TITLES.global;
+  const title = isRtl ? titleEntry.he : titleEntry.en;
 
   return (
     <>
       {/* Floating launcher — visible whenever the panel is closed. */}
       {!isOpen && (
-        <Tooltip title="פתח עוזר חכם · Ctrl+K" placement="top">
+        <Tooltip title={L('פתח עוזר חכם · Ctrl+K', 'Open Smart Assistant · Ctrl+K')} placement="top">
           <Fab
             onClick={open}
             aria-label="open AI assistant"
@@ -130,10 +135,10 @@ export default function AiAssistant() {
                 {title}
               </Typography>
               <Typography sx={{ fontSize: 11, color: 'grey.600', display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <CmdIcon sx={{ fontSize: 12 }} /> + K לפתיחה מהירה
+                <CmdIcon sx={{ fontSize: 12 }} /> {L('+ K לפתיחה מהירה', '+ K for quick open')}
               </Typography>
             </Box>
-            <Tooltip title="הגדרות עוזר">
+            <Tooltip title={L('הגדרות עוזר', 'Assistant settings')}>
               <IconButton size="small" onClick={(e) => setSettingsAnchor(e.currentTarget)} aria-label="assistant settings">
                 <SettingsIcon fontSize="small" />
               </IconButton>
@@ -159,9 +164,12 @@ export default function AiAssistant() {
                 }
                 label={
                   <Box>
-                    <Typography sx={{ fontSize: 13, fontWeight: 600 }}>אישור אוטומטי</Typography>
+                    <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{L('אישור אוטומטי', 'Auto-approve')}</Typography>
                     <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
-                      פעולות יבוצעו בלי כרטיס אישור. כל שינוי נשמר ב"ניהול גרסאות" וניתן לשחזר.
+                      {L(
+                        'פעולות יבוצעו בלי כרטיס אישור. כל שינוי נשמר ב"ניהול גרסאות" וניתן לשחזר.',
+                        'Actions run without a confirmation card. Every change is saved in "Version history" and can be restored.',
+                      )}
                     </Typography>
                   </Box>
                 }
@@ -171,7 +179,7 @@ export default function AiAssistant() {
             <Divider />
             <MenuItem
               onClick={() => {
-                if (confirm('למחוק את היסטוריית השיחה? הפעולה אינה הפיכה.')) {
+                if (confirm(L('למחוק את היסטוריית השיחה? הפעולה אינה הפיכה.', 'Delete the chat history? This action cannot be undone.'))) {
                   requestClear();
                   setSettingsAnchor(null);
                 }
@@ -180,9 +188,12 @@ export default function AiAssistant() {
             >
               <DeleteSweepIcon fontSize="small" />
               <Box>
-                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>מחק את היסטוריית השיחה</Typography>
+                <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{L('מחק את היסטוריית השיחה', 'Delete chat history')}</Typography>
                 <Typography sx={{ fontSize: 11, color: 'grey.600' }}>
-                  השיחה נשמרת בדפדפן שלכם ועוברת ריענון. מחיקה תאפס את ההיסטוריה.
+                  {L(
+                    'השיחה נשמרת בדפדפן שלכם ועוברת ריענון. מחיקה תאפס את ההיסטוריה.',
+                    'The chat is saved in your browser and survives reloads. Deleting it will reset the history.',
+                  )}
                 </Typography>
               </Box>
             </MenuItem>
@@ -200,8 +211,17 @@ export default function AiAssistant() {
             }}>
               <BoltIcon sx={{ fontSize: 16 }} />
               <Box sx={{ flex: 1 }}>
-                אישור אוטומטי פעיל — פעולות יבוצעו ללא כרטיסי אישור.
-                ניתן לשחזר ב<a href="/history" style={{ color: 'inherit', textDecoration: 'underline' }}>ניהול גרסאות</a>.
+                {isRtl ? (
+                  <>
+                    אישור אוטומטי פעיל — פעולות יבוצעו ללא כרטיסי אישור.
+                    ניתן לשחזר ב<a href="/history" style={{ color: 'inherit', textDecoration: 'underline' }}>ניהול גרסאות</a>.
+                  </>
+                ) : (
+                  <>
+                    Auto-approve is on — actions will run without confirmation cards.
+                    You can restore them in <a href="/history" style={{ color: 'inherit', textDecoration: 'underline' }}>Version history</a>.
+                  </>
+                )}
               </Box>
             </Box>
           )}

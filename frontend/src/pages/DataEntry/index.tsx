@@ -1009,6 +1009,8 @@ function TagsCell({ teacher, allTags, onToggle }: {
   allTags: any[];
   onToggle: (tagId: number) => void;
 }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const assignedIds: number[] = teacher.tags ?? [];
   const assigned = allTags.filter((t) => assignedIds.includes(t.id));
@@ -1027,7 +1029,7 @@ function TagsCell({ teacher, allTags, onToggle }: {
         <TagIcon fontSize="small" />
       </IconButton>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
-        {allTags.length === 0 && <MenuItem disabled>אין תגיות זמינות</MenuItem>}
+        {allTags.length === 0 && <MenuItem disabled>{isRtl ? 'אין תגיות זמינות' : 'No tags available'}</MenuItem>}
         {allTags.map((tag) => {
           const on = assignedIds.includes(tag.id);
           return (

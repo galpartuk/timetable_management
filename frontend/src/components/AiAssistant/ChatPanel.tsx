@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box, Chip, IconButton, InputBase, Stack, Typography, CircularProgress,
 } from '@mui/material';
@@ -20,6 +21,9 @@ interface Props {
 export function ChatPanel({ ctx }: Props) {
   const { state, sendMessage, resolveProposal, reset } = useAiAssistantChat();
   const { consumePrefill, state: { autoApprove, clearRequest } } = useAiAssistant();
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoResolvingRef = useRef(false);
@@ -169,7 +173,7 @@ export function ChatPanel({ ctx }: Props) {
                 submit(draft);
               }
             }}
-            placeholder="שאל את ה-AI… (Enter לשליחה, Shift+Enter לשורה חדשה)"
+            placeholder={L('שאל את ה-AI… (Enter לשליחה, Shift+Enter לשורה חדשה)', 'Ask the AI… (Enter to send, Shift+Enter for a new line)')}
             sx={{ flex: 1, fontSize: 14, lineHeight: 1.5 }}
             disabled={state.isStreaming}
           />
@@ -194,6 +198,9 @@ export function ChatPanel({ ctx }: Props) {
 }
 
 function EmptyState({ ctx, onPick }: { ctx: ModuleContext; onPick: (text: string) => void }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   return (
     <Box sx={{ textAlign: 'center', py: 3 }}>
       <Box
@@ -208,10 +215,10 @@ function EmptyState({ ctx, onPick }: { ctx: ModuleContext; onPick: (text: string
         <SparkleIcon />
       </Box>
       <Typography sx={{ fontSize: 17, fontWeight: 700, mb: 0.5 }}>
-        איך אפשר לעזור?
+        {L('איך אפשר לעזור?', 'How can I help?')}
       </Typography>
       <Typography sx={{ fontSize: 13, color: 'grey.600', mb: 2 }}>
-        שאל אותי כל דבר על המודול הזה, או בחר פעולה מהירה.
+        {L('שאל אותי כל דבר על המודול הזה, או בחר פעולה מהירה.', 'Ask me anything about this module, or pick a quick action.')}
       </Typography>
 
       {ctx.quickActions && ctx.quickActions.length > 0 && (

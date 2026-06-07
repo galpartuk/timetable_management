@@ -27,34 +27,34 @@ import {
 
 // ── catalog of export sheets, with friendly Hebrew labels and a hint of
 // what data they include. Order here = display order.
-type SheetMeta = { key: string; label: string; description: string; group: 'timetable' | 'master' | 'admin' };
+type SheetMeta = { key: string; label: string; labelEn: string; description: string; descriptionEn: string; group: 'timetable' | 'master' | 'admin' };
 const SHEETS: SheetMeta[] = [
-  { key: 'timetable_by_class', label: 'מערכת לפי כיתה', description: 'עמוד נפרד לכל כיתה — ימים × שיעורים', group: 'timetable' },
-  { key: 'timetable_by_teacher', label: 'מערכת לפי מורה', description: 'עמוד נפרד לכל מורה — ימים × שיעורים', group: 'timetable' },
-  { key: 'timetable_flat', label: 'כל השיעורים (טבלה אחת)', description: 'כל השורות במערכת בעמוד אחד', group: 'timetable' },
-  { key: 'conflicts', label: 'התנגשויות', description: 'מורה/כיתה/חדר משובצים פעמיים באותה משבצת', group: 'timetable' },
+  { key: 'timetable_by_class', label: 'מערכת לפי כיתה', labelEn: 'Timetable by class', description: 'עמוד נפרד לכל כיתה — ימים × שיעורים', descriptionEn: 'A separate sheet per class — days × periods', group: 'timetable' },
+  { key: 'timetable_by_teacher', label: 'מערכת לפי מורה', labelEn: 'Timetable by teacher', description: 'עמוד נפרד לכל מורה — ימים × שיעורים', descriptionEn: 'A separate sheet per teacher — days × periods', group: 'timetable' },
+  { key: 'timetable_flat', label: 'כל השיעורים (טבלה אחת)', labelEn: 'All lessons (single table)', description: 'כל השורות במערכת בעמוד אחד', descriptionEn: 'Every row of the timetable on one sheet', group: 'timetable' },
+  { key: 'conflicts', label: 'התנגשויות', labelEn: 'Conflicts', description: 'מורה/כיתה/חדר משובצים פעמיים באותה משבצת', descriptionEn: 'Teacher/class/room scheduled twice in the same slot', group: 'timetable' },
 
-  { key: 'teachers', label: 'מורים', description: 'שמות, אימייל, טלפון, מקס שעות, יום חופש', group: 'master' },
-  { key: 'subjects', label: 'מקצועות', description: 'שם בעברית/אנגלית, צבע', group: 'master' },
-  { key: 'classes', label: 'כיתות', description: 'שכבה, מספר, סוג, מספר תלמידים', group: 'master' },
-  { key: 'time_slots', label: 'משבצות זמן', description: 'יום ושיעור עם זמני התחלה וסיום', group: 'master' },
-  { key: 'rooms', label: 'חדרים', description: 'שם, קיבולת, סוג', group: 'master' },
-  { key: 'assignments', label: 'שיבוצי הוראה', description: 'מי מלמד מה למי וכמה שעות', group: 'master' },
-  { key: 'constraints', label: 'אילוצים', description: 'אילוצים מוגדרים: סוג, עדיפות, פרמטרים', group: 'master' },
-  { key: 'import_logs', label: 'יומן ייבואים', description: '200 הייבואים האחרונים', group: 'master' },
-  { key: 'roundtrip_haarachot', label: 'הערכות (פורמט מקורי)', description: 'ייצוא חזרה לפורמט הקלט — תפקידים + גיליון לכל מקצוע', group: 'master' },
-  { key: 'teacher_summary', label: 'סיכום מורים', description: 'מה המערכת הבינה — מורה × מקצוע × כיתה × שעות', group: 'master' },
-  { key: 'diagnostics', label: 'אבחון היתכנות', description: 'עומס מול משבצות זמינות — כיתות/מורים בעומס יתר', group: 'master' },
+  { key: 'teachers', label: 'מורים', labelEn: 'Teachers', description: 'שמות, אימייל, טלפון, מקס שעות, יום חופש', descriptionEn: 'Names, email, phone, max hours, day off', group: 'master' },
+  { key: 'subjects', label: 'מקצועות', labelEn: 'Subjects', description: 'שם בעברית/אנגלית, צבע', descriptionEn: 'Hebrew/English name, color', group: 'master' },
+  { key: 'classes', label: 'כיתות', labelEn: 'Classes', description: 'שכבה, מספר, סוג, מספר תלמידים', descriptionEn: 'Grade, number, type, student count', group: 'master' },
+  { key: 'time_slots', label: 'משבצות זמן', labelEn: 'Time slots', description: 'יום ושיעור עם זמני התחלה וסיום', descriptionEn: 'Day and period with start and end times', group: 'master' },
+  { key: 'rooms', label: 'חדרים', labelEn: 'Rooms', description: 'שם, קיבולת, סוג', descriptionEn: 'Name, capacity, type', group: 'master' },
+  { key: 'assignments', label: 'שיבוצי הוראה', labelEn: 'Teaching assignments', description: 'מי מלמד מה למי וכמה שעות', descriptionEn: 'Who teaches what to whom and how many hours', group: 'master' },
+  { key: 'constraints', label: 'אילוצים', labelEn: 'Constraints', description: 'אילוצים מוגדרים: סוג, עדיפות, פרמטרים', descriptionEn: 'Defined constraints: type, priority, parameters', group: 'master' },
+  { key: 'import_logs', label: 'יומן ייבואים', labelEn: 'Import log', description: '200 הייבואים האחרונים', descriptionEn: 'The 200 most recent imports', group: 'master' },
+  { key: 'roundtrip_haarachot', label: 'הערכות (פורמט מקורי)', labelEn: 'Assessments (original format)', description: 'ייצוא חזרה לפורמט הקלט — תפקידים + גיליון לכל מקצוע', descriptionEn: 'Export back to the input format — roles + a sheet per subject', group: 'master' },
+  { key: 'teacher_summary', label: 'סיכום מורים', labelEn: 'Teacher summary', description: 'מה המערכת הבינה — מורה × מקצוע × כיתה × שעות', descriptionEn: 'What the system understood — teacher × subject × class × hours', group: 'master' },
+  { key: 'diagnostics', label: 'אבחון היתכנות', labelEn: 'Feasibility diagnostics', description: 'עומס מול משבצות זמינות — כיתות/מורים בעומס יתר', descriptionEn: 'Load vs. available slots — overloaded classes/teachers', group: 'master' },
 
-  { key: 'users', label: 'משתמשים', description: 'כל המשתמשים, תפקידים, התחברות אחרונה (super_admin)', group: 'admin' },
-  { key: 'audit_logins', label: 'יומן התחברויות', description: '1000 התחברויות אחרונות (super_admin)', group: 'admin' },
-  { key: 'audit_activities', label: 'יומן פעולות', description: '1000 פעולות אחרונות (super_admin)', group: 'admin' },
+  { key: 'users', label: 'משתמשים', labelEn: 'Users', description: 'כל המשתמשים, תפקידים, התחברות אחרונה (super_admin)', descriptionEn: 'All users, roles, last login (super_admin)', group: 'admin' },
+  { key: 'audit_logins', label: 'יומן התחברויות', labelEn: 'Login log', description: '1000 התחברויות אחרונות (super_admin)', descriptionEn: 'The 1000 most recent logins (super_admin)', group: 'admin' },
+  { key: 'audit_activities', label: 'יומן פעולות', labelEn: 'Activity log', description: '1000 פעולות אחרונות (super_admin)', descriptionEn: 'The 1000 most recent activities (super_admin)', group: 'admin' },
 ];
 
-const GROUP_TITLES: Record<SheetMeta['group'], string> = {
-  timetable: 'מערכת השעות',
-  master: 'נתוני בסיס',
-  admin: 'ניהול ובקרה',
+const GROUP_TITLES: Record<SheetMeta['group'], { he: string; en: string }> = {
+  timetable: { he: 'מערכת השעות', en: 'Timetable' },
+  master: { he: 'נתוני בסיס', en: 'Master data' },
+  admin: { he: 'ניהול ובקרה', en: 'Administration & audit' },
 };
 
 type TabValue = 'export' | 'gaps' | 'quality' | 'manage';
@@ -124,6 +124,9 @@ function PillTab({ label, active, onClick, danger }: {
 // ── EXPORT TAB ────────────────────────────────────────────────────────────
 
 function ExportTab() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [options, setOptions] = useState<{ super_admin_only: string[]; is_super_admin: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set([
     'timetable_by_class', 'teachers', 'subjects', 'classes', 'assignments',
@@ -191,7 +194,7 @@ function ExportTab() {
       URL.revokeObjectURL(url);
     } catch (e: any) {
       // Blob error responses need a different unwrap.
-      let msg = 'הייצוא נכשל';
+      let msg = L('הייצוא נכשל', 'Export failed');
       if (e.response?.data instanceof Blob) {
         try {
           msg = JSON.parse(await e.response.data.text())?.error || msg;
@@ -217,10 +220,13 @@ function ExportTab() {
                  sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
             <Box>
               <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
-                הורד קובץ מנורמל — מה שהמערכת הבינה
+                {L('הורד קובץ מנורמל — מה שהמערכת הבינה', 'Download normalized file — what the system understood')}
               </Typography>
               <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
-                גיליון לכל מקצוע (פורמט מקורי) + סיכום מורים + אבחון היתכנות. בדקו, תקנו, וייבאו מחדש.
+                {L(
+                  'גיליון לכל מקצוע (פורמט מקורי) + סיכום מורים + אבחון היתכנות. בדקו, תקנו, וייבאו מחדש.',
+                  'A sheet per subject (original format) + teacher summary + feasibility diagnostics. Review, fix, and re-import.',
+                )}
               </Typography>
             </Box>
             <Button
@@ -229,7 +235,7 @@ function ExportTab() {
               disabled={downloading}
               onClick={() => download(['diagnostics', 'teacher_summary', 'roundtrip_haarachot'])}
             >
-              {downloading ? 'מייצא…' : 'הורד קובץ מנורמל'}
+              {downloading ? L('מייצא…', 'Exporting…') : L('הורד קובץ מנורמל', 'Download normalized file')}
             </Button>
           </Stack>
         </CardContent>
@@ -239,7 +245,7 @@ function ExportTab() {
         <Card>
           <CardContent>
             <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.700', mb: 1 }}>
-              מערכת לייצוא (לעמודי מערכת השעות)
+              {L('מערכת לייצוא (לעמודי מערכת השעות)', 'Timetable to export (for timetable sheets)')}
             </Typography>
             <TextField
               select size="small" fullWidth
@@ -247,7 +253,7 @@ function ExportTab() {
               onChange={(e) => setTimetableId(Number(e.target.value))}
               sx={{ maxWidth: 360 }}
             >
-              {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
+              {timetables.length === 0 && <MenuItem value="" disabled>{L('אין מערכות', 'No timetables')}</MenuItem>}
               {timetables.map((tt: any) => (
                 <MenuItem key={tt.id} value={tt.id}>
                   {tt.name} — {tt.academic_year}
@@ -266,12 +272,12 @@ function ExportTab() {
           <Card key={group}>
             <CardContent>
               <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-                <Typography sx={{ fontSize: 16, fontWeight: 700 }}>{GROUP_TITLES[group]}</Typography>
+                <Typography sx={{ fontSize: 16, fontWeight: 700 }}>{isRtl ? GROUP_TITLES[group].he : GROUP_TITLES[group].en}</Typography>
                 <Button
                   size="small" variant="text"
                   onClick={() => toggleGroup(group, allChecked)}
                 >
-                  {allChecked ? 'נקה הכול' : 'בחר הכול'}
+                  {allChecked ? L('נקה הכול', 'Clear all') : L('בחר הכול', 'Select all')}
                 </Button>
               </Stack>
               <Stack spacing={0.5}>
@@ -292,13 +298,13 @@ function ExportTab() {
                       label={
                         <Box>
                           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                            <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{s.label}</Typography>
+                            <Typography sx={{ fontSize: 14, fontWeight: 600 }}>{isRtl ? s.label : s.labelEn}</Typography>
                             {requiresAdmin && (
                               <Chip size="small" icon={<ShieldIcon sx={{ fontSize: 12 }} />} label="super_admin"
                                     sx={{ height: 18, fontSize: 10, background: 'rgba(79,70,229,0.10)', color: 'primary.dark' }} />
                             )}
                           </Stack>
-                          <Typography sx={{ fontSize: 12, color: 'grey.600' }}>{s.description}</Typography>
+                          <Typography sx={{ fontSize: 12, color: 'grey.600' }}>{isRtl ? s.description : s.descriptionEn}</Typography>
                         </Box>
                       }
                       sx={{
@@ -322,10 +328,12 @@ function ExportTab() {
                  sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
             <Box>
               <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
-                {selected.size === 0 ? 'בחר לפחות עמוד אחד לייצוא' : `${selected.size} עמודים נבחרו`}
+                {selected.size === 0
+                  ? L('בחר לפחות עמוד אחד לייצוא', 'Select at least one sheet to export')
+                  : L(`${selected.size} עמודים נבחרו`, `${selected.size} sheets selected`)}
               </Typography>
               <Typography sx={{ fontSize: 12, color: 'grey.600' }}>
-                הקובץ יורד ישירות לדפדפן.
+                {L('הקובץ יורד ישירות לדפדפן.', 'The file downloads directly to your browser.')}
               </Typography>
             </Box>
             <Button
@@ -334,7 +342,7 @@ function ExportTab() {
               disabled={selected.size === 0 || downloading || (needsTimetable && !timetableId)}
               onClick={() => download()}
             >
-              {downloading ? 'מייצא…' : 'הורד אקסל'}
+              {downloading ? L('מייצא…', 'Exporting…') : L('הורד אקסל', 'Download Excel')}
             </Button>
           </Stack>
         </CardContent>
@@ -492,7 +500,7 @@ function ManageTab() {
       setConfirm(null);
       refreshTimetables();
     } catch (e: any) {
-      setError(e.response?.data?.error || 'הפעולה נכשלה');
+      setError(e.response?.data?.error || L('הפעולה נכשלה', 'The operation failed'));
     } finally {
       setWorking(false);
     }
@@ -667,6 +675,9 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 // ── GAP ANALYSIS TAB ───────────────────────────────────────────────────────
 
 function GapAnalysisTab() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const [data, setData] = useState<GapAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -678,7 +689,7 @@ function GapAnalysisTab() {
       const res = await getGapAnalysis(1);
       setData(res.data);
     } catch (e: any) {
-      setError(e.response?.data?.error || 'טעינת הנתונים נכשלה');
+      setError(e.response?.data?.error || L('טעינת הנתונים נכשלה', 'Failed to load data'));
     } finally {
       setLoading(false);
     }
@@ -710,13 +721,13 @@ function GapAnalysisTab() {
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography sx={{ fontSize: 16, fontWeight: 700 }}>סיכום מצב הנתונים</Typography>
-        <Button size="small" onClick={load} disabled={loading}>רענן</Button>
+        <Typography sx={{ fontSize: 16, fontWeight: 700 }}>{L('סיכום מצב הנתונים', 'Data status summary')}</Typography>
+        <Button size="small" onClick={load} disabled={loading}>{L('רענן', 'Refresh')}</Button>
       </Stack>
 
       <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
         <GapCard
-          title="כיתות ללא מחנכ/ת"
+          title={L('כיתות ללא מחנכ/ת', 'Classes without a homeroom teacher')}
           count={data.classes_missing_homeroom_count}
           severity={data.classes_missing_homeroom_count > 0 ? 'warning' : 'ok'}
         >
@@ -726,36 +737,38 @@ function GapAnalysisTab() {
         </GapCard>
 
         <GapCard
-          title="שיבוצים ללא מורה"
+          title={L('שיבוצים ללא מורה', 'Assignments without a teacher')}
           count={data.assignments_without_teacher_count}
           severity={data.assignments_without_teacher_count > 0 ? 'warning' : 'ok'}
         >
           <Typography sx={{ fontSize: 12, color: 'grey.700' }}>
-            {data.assignments_without_teacher_count} שיעורים ללא מורה מוקצה.
-            הבנייה האוטומטית תדלג עליהם.
+            {L(
+              `${data.assignments_without_teacher_count} שיעורים ללא מורה מוקצה. הבנייה האוטומטית תדלג עליהם.`,
+              `${data.assignments_without_teacher_count} lessons have no assigned teacher. Auto-generation will skip them.`,
+            )}
           </Typography>
         </GapCard>
 
         <GapCard
-          title="מורים מעל מכסה"
+          title={L('מורים מעל מכסה', 'Teachers over their cap')}
           count={overCap.length}
           severity={overCap.length > 0 ? 'error' : 'ok'}
         >
           {overCap.slice(0, 20).map((t) => (
             <Typography key={t.id} sx={{ fontSize: 12 }}>
-              {t.name}: {t.assigned_hours}h / מקס {t.cap}h
+              {t.name}: {t.assigned_hours}h / {L('מקס', 'max')} {t.cap}h
             </Typography>
           ))}
         </GapCard>
 
         <GapCard
-          title="מורים פחות מחובת ההוראה"
+          title={L('מורים פחות מחובת ההוראה', 'Teachers below their teaching duty')}
           count={underTaught.length}
           severity={underTaught.length > 0 ? 'warning' : 'ok'}
         >
           {underTaught.slice(0, 20).map((t) => (
             <Typography key={t.id} sx={{ fontSize: 12 }}>
-              {t.name}: {t.assigned_hours}h / חובה {t.must_teach}h
+              {t.name}: {t.assigned_hours}h / {L('חובה', 'required')} {t.must_teach}h
             </Typography>
           ))}
         </GapCard>
@@ -764,18 +777,18 @@ function GapAnalysisTab() {
       <Card>
         <CardContent>
           <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>
-            עומס מורים (Top 30)
+            {L('עומס מורים (Top 30)', 'Teacher load (Top 30)')}
           </Typography>
           <Box sx={{ maxHeight: 480, overflow: 'auto' }}>
             <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
               <Box component="thead">
                 <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.5, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700 } }}>
-                  <Box component="th">מורה</Box>
-                  <Box component="th">שעות הוראה</Box>
-                  <Box component="th">שעות תפקיד</Box>
-                  <Box component="th">חובת הוראה</Box>
-                  <Box component="th">מכסה</Box>
-                  <Box component="th">סטטוס</Box>
+                  <Box component="th">{L('מורה', 'Teacher')}</Box>
+                  <Box component="th">{L('שעות הוראה', 'Teaching hours')}</Box>
+                  <Box component="th">{L('שעות תפקיד', 'Role hours')}</Box>
+                  <Box component="th">{L('חובת הוראה', 'Teaching duty')}</Box>
+                  <Box component="th">{L('מכסה', 'Cap')}</Box>
+                  <Box component="th">{L('סטטוס', 'Status')}</Box>
                 </Box>
               </Box>
               <Box component="tbody">
@@ -787,9 +800,9 @@ function GapAnalysisTab() {
                     <Box component="td">{t.must_teach}</Box>
                     <Box component="td">{t.cap}</Box>
                     <Box component="td">
-                      {t.over_cap && <Chip size="small" color="error" label="מעל מכסה" />}
-                      {t.under_must_teach && <Chip size="small" color="warning" label="פחות מחובה" />}
-                      {!t.over_cap && !t.under_must_teach && <Chip size="small" color="success" label="תקין" />}
+                      {t.over_cap && <Chip size="small" color="error" label={L('מעל מכסה', 'Over cap')} />}
+                      {t.under_must_teach && <Chip size="small" color="warning" label={L('פחות מחובה', 'Below duty')} />}
+                      {!t.over_cap && !t.under_must_teach && <Chip size="small" color="success" label={L('תקין', 'OK')} />}
                     </Box>
                   </Box>
                 ))}
@@ -812,6 +825,9 @@ type TeacherSortKey =
   | 'bagrut_hours' | 'role_hours' | 'total_contract_hours' | 'utilization_pct';
 
 function QualityTab() {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const navigate = useNavigate();
   const [timetables, setTimetables] = useState<any[]>([]);
   const [timetableId, setTimetableId] = useState<number | ''>('');
@@ -837,7 +853,7 @@ function QualityTab() {
     setError('');
     getTimetableQuality(timetableId as number)
       .then((r) => setQuality(r.data))
-      .catch((e) => setError(e.response?.data?.error || 'טעינת הנתונים נכשלה'))
+      .catch((e) => setError(e.response?.data?.error || L('טעינת הנתונים נכשלה', 'Failed to load data')))
       .finally(() => setLoading(false));
   }, [timetableId]);
 
@@ -871,15 +887,24 @@ function QualityTab() {
 
   const exportCsv = () => {
     if (!quality) return;
-    const headers = [
+    const headers = isRtl ? [
       'שם המורה', 'שעות הוראה', 'שעות בגרות', 'שעות תפקיד',
       'סך הכל שעות', 'מכסה', 'ניצול (%)',
       'חלונות', 'חלונות ארוכים', 'פער מקס׳',
       'ימי הוראה', 'ימים עם חלונות',
       'יום הוראה ארוך', 'מקס׳ ליום', 'ממוצע ליום',
       'שיעורים אחרי 8', 'ימים פותחים', 'מקצועות', 'כיתות', 'גמול תפקיד', 'יום חופש',
+    ] : [
+      'Teacher name', 'Teaching hours', 'Bagrut hours', 'Role hours',
+      'Total hours', 'Cap', 'Utilization (%)',
+      'Windows', 'Long windows', 'Max gap',
+      'Days taught', 'Days with windows',
+      'Longest teaching day', 'Max per day', 'Avg per day',
+      'Lessons after 8', 'Days opened', 'Subjects', 'Classes', 'Role stipend', 'Day off',
     ];
-    const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+    const dayNames: Record<number, string> = isRtl
+      ? { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' }
+      : { 1: 'Sun', 2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu' };
     const rows = sortedTeachers.map((t) => [
       t.name, t.lessons, t.bagrut_hours, t.role_hours,
       t.total_contract_hours, t.cap, t.utilization_pct,
@@ -913,12 +938,12 @@ function QualityTab() {
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
             <TextField
               select size="small"
-              label="מערכת לבדיקה"
+              label={L('מערכת לבדיקה', 'Timetable to inspect')}
               value={timetableId}
               onChange={(e) => setTimetableId(Number(e.target.value))}
               sx={{ minWidth: 320 }}
             >
-              {timetables.length === 0 && <MenuItem value="" disabled>אין מערכות</MenuItem>}
+              {timetables.length === 0 && <MenuItem value="" disabled>{L('אין מערכות', 'No timetables')}</MenuItem>}
               {timetables.map((tt: any) => (
                 <MenuItem key={tt.id} value={tt.id}>
                   {tt.name} — {tt.academic_year} ({tt.status})
@@ -927,7 +952,7 @@ function QualityTab() {
             </TextField>
             <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
                     disabled={!quality} onClick={exportCsv}>
-              ייצא טבלה ל-CSV
+              {L('ייצא טבלה ל-CSV', 'Export table to CSV')}
             </Button>
           </Stack>
         </CardContent>
@@ -940,41 +965,53 @@ function QualityTab() {
       {quality && (
         <>
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-            <QualityMetric label="סך השיעורים" value={quality.totals.entries} tone="primary" />
+            <QualityMetric label={L('סך השיעורים', 'Total lessons')} value={quality.totals.entries} tone="primary" />
             <QualityMetric
-              label="חלונות מורים (סך)"
+              label={L('חלונות מורים (סך)', 'Teacher windows (total)')}
               value={quality.totals.total_teacher_windows}
-              hint={`ממוצע ${quality.totals.avg_teacher_windows.toFixed(2)} לכל מורה`}
+              hint={L(
+                `ממוצע ${quality.totals.avg_teacher_windows.toFixed(2)} לכל מורה`,
+                `${quality.totals.avg_teacher_windows.toFixed(2)} avg per teacher`,
+              )}
               tone={
                 quality.totals.total_teacher_windows < 30 ? 'good'
                 : quality.totals.total_teacher_windows < 100 ? 'warn' : 'bad'
               }
             />
             <QualityMetric
-              label={`חלונות ארוכים (${quality.long_window_threshold}+ שעות)`}
+              label={L(
+                `חלונות ארוכים (${quality.long_window_threshold}+ שעות)`,
+                `Long windows (${quality.long_window_threshold}+ hours)`,
+              )}
               value={quality.totals.total_long_windows}
-              hint={`${quality.totals.teachers_with_long_windows} מורים מושפעים`}
+              hint={L(
+                `${quality.totals.teachers_with_long_windows} מורים מושפעים`,
+                `${quality.totals.teachers_with_long_windows} teachers affected`,
+              )}
               tone={
                 quality.totals.total_long_windows === 0 ? 'good'
                 : quality.totals.total_long_windows < 5 ? 'warn' : 'bad'
               }
             />
             <QualityMetric
-              label="חלונות כיתות (סך)"
+              label={L('חלונות כיתות (סך)', 'Class windows (total)')}
               value={quality.totals.total_class_windows}
-              hint={`${quality.totals.classes_with_windows} כיתות`}
+              hint={L(
+                `${quality.totals.classes_with_windows} כיתות`,
+                `${quality.totals.classes_with_windows} classes`,
+              )}
               tone={
                 quality.totals.total_class_windows < 10 ? 'good'
                 : quality.totals.total_class_windows < 50 ? 'warn' : 'bad'
               }
             />
             <QualityMetric
-              label="מורים עם חלונות"
+              label={L('מורים עם חלונות', 'Teachers with windows')}
               value={quality.totals.teachers_with_windows}
-              hint={`מתוך ${quality.teachers.length}`}
+              hint={L(`מתוך ${quality.teachers.length}`, `of ${quality.teachers.length}`)}
             />
             <QualityMetric
-              label="שיעורים אחרי 8"
+              label={L('שיעורים אחרי 8', 'Lessons after period 8')}
               value={quality.totals.late_period_lessons}
               tone="warn"
             />
@@ -985,11 +1022,14 @@ function QualityTab() {
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}
                      sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between', mb: 2 }}>
                 <Typography sx={{ fontSize: 15, fontWeight: 700 }}>
-                  טבלת מורים — {sortedTeachers.length} מתוך {quality.teachers.length}
+                  {L(
+                    `טבלת מורים — ${sortedTeachers.length} מתוך ${quality.teachers.length}`,
+                    `Teacher table — ${sortedTeachers.length} of ${quality.teachers.length}`,
+                  )}
                 </Typography>
                 <Stack direction="row" spacing={1}>
                   <TextField
-                    size="small" placeholder="חיפוש מורה…"
+                    size="small" placeholder={L('חיפוש מורה…', 'Search teacher…')}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     sx={{ width: 200 }}
@@ -999,10 +1039,10 @@ function QualityTab() {
                     onChange={(e) => setMinWindowsFilter(Number(e.target.value))}
                     sx={{ width: 160 }}
                   >
-                    <MenuItem value={0}>כל המורים</MenuItem>
-                    <MenuItem value={1}>עם 1+ חלונות</MenuItem>
-                    <MenuItem value={3}>עם 3+ חלונות</MenuItem>
-                    <MenuItem value={5}>עם 5+ חלונות</MenuItem>
+                    <MenuItem value={0}>{L('כל המורים', 'All teachers')}</MenuItem>
+                    <MenuItem value={1}>{L('עם 1+ חלונות', 'With 1+ windows')}</MenuItem>
+                    <MenuItem value={3}>{L('עם 3+ חלונות', 'With 3+ windows')}</MenuItem>
+                    <MenuItem value={5}>{L('עם 5+ חלונות', 'With 5+ windows')}</MenuItem>
                   </TextField>
                 </Stack>
               </Stack>
@@ -1022,24 +1062,24 @@ function QualityTab() {
                         userSelect: 'none', background: '#fff',
                       },
                     }}>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="name" onSort={onSort}>מורה</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>שעות הוראה</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="bagrut_hours" onSort={onSort}>שעות בגרות</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>שעות תפקיד</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="total_contract_hours" onSort={onSort}>סך הכל</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="utilization_pct" onSort={onSort}>ניצול %</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="windows" onSort={onSort}>חלונות</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="long_windows" onSort={onSort}>חלונות ארוכים</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_single_gap" onSort={onSort}>פער מקס׳</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="days_taught" onSort={onSort}>ימי הוראה</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="longest_teaching_day" onSort={onSort}>יום ארוך</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_daily_lessons" onSort={onSort}>מקס׳ ליום</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="avg_daily_lessons" onSort={onSort}>ממוצע ליום</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="late_period_lessons" onSort={onSort}>אחרי 8</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="first_period_count" onSort={onSort}>פותח יום</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_subjects" onSort={onSort}>מקצועות</SortableTh>
-                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_classes" onSort={onSort}>כיתות</SortableTh>
-                      <Box component="th">חופש</Box>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="name" onSort={onSort}>{L('מורה', 'Teacher')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="lessons" onSort={onSort}>{L('שעות הוראה', 'Teaching hours')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="bagrut_hours" onSort={onSort}>{L('שעות בגרות', 'Bagrut hours')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="role_hours" onSort={onSort}>{L('שעות תפקיד', 'Role hours')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="total_contract_hours" onSort={onSort}>{L('סך הכל', 'Total')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="utilization_pct" onSort={onSort}>{L('ניצול %', 'Util %')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="windows" onSort={onSort}>{L('חלונות', 'Windows')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="long_windows" onSort={onSort}>{L('חלונות ארוכים', 'Long windows')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_single_gap" onSort={onSort}>{L('פער מקס׳', 'Max gap')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="days_taught" onSort={onSort}>{L('ימי הוראה', 'Days taught')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="longest_teaching_day" onSort={onSort}>{L('יום ארוך', 'Longest day')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="max_daily_lessons" onSort={onSort}>{L('מקס׳ ליום', 'Max/day')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="avg_daily_lessons" onSort={onSort}>{L('ממוצע ליום', 'Avg/day')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="late_period_lessons" onSort={onSort}>{L('אחרי 8', 'After 8')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="first_period_count" onSort={onSort}>{L('פותח יום', 'Opens day')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_subjects" onSort={onSort}>{L('מקצועות', 'Subjects')}</SortableTh>
+                      <SortableTh sortKey={sortKey} sortDir={sortDir} k="distinct_classes" onSort={onSort}>{L('כיתות', 'Classes')}</SortableTh>
+                      <Box component="th">{L('חופש', 'Off')}</Box>
                     </Box>
                   </Box>
                   <Box component="tbody">
@@ -1051,7 +1091,7 @@ function QualityTab() {
                     {sortedTeachers.length === 0 && (
                       <Box component="tr">
                         <Box component="td" colSpan={15} sx={{ py: 4, textAlign: 'center', color: 'grey.500' }}>
-                          {search ? 'אין תוצאות חיפוש' : '✓ אין מורים שעוברים את הסינון'}
+                          {search ? L('אין תוצאות חיפוש', 'No search results') : L('✓ אין מורים שעוברים את הסינון', '✓ No teachers match the filter')}
                         </Box>
                       </Box>
                     )}
@@ -1063,14 +1103,14 @@ function QualityTab() {
 
           <Card>
             <CardContent>
-              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>כיתות עם חלונות</Typography>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>{L('כיתות עם חלונות', 'Classes with windows')}</Typography>
               <Box sx={{ overflow: 'auto' }}>
                 <Box component="table" sx={{ width: '100%', fontSize: 12 }}>
                   <Box component="thead">
                     <Box component="tr" sx={{ '& th': { textAlign: 'right', py: 0.75, borderBottom: '1px solid', borderColor: 'grey.200', fontWeight: 700, fontSize: 11, color: 'grey.600', textTransform: 'uppercase' } }}>
-                      <Box component="th">כיתה</Box>
-                      <Box component="th">שיעורים</Box>
-                      <Box component="th">חלונות</Box>
+                      <Box component="th">{L('כיתה', 'Class')}</Box>
+                      <Box component="th">{L('שיעורים', 'Lessons')}</Box>
+                      <Box component="th">{L('חלונות', 'Windows')}</Box>
                     </Box>
                   </Box>
                   <Box component="tbody">
@@ -1088,7 +1128,7 @@ function QualityTab() {
                     {quality.classes.filter((c) => c.windows > 0).length === 0 && (
                       <Box component="tr">
                         <Box component="td" colSpan={3} sx={{ py: 3, textAlign: 'center', color: 'grey.500' }}>
-                          ✓ אין חלונות אצל אף כיתה
+                          {L('✓ אין חלונות אצל אף כיתה', '✓ No class has any windows')}
                         </Box>
                       </Box>
                     )}
@@ -1104,6 +1144,9 @@ function QualityTab() {
 }
 
 function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const L = (he: string, en: string) => (isRtl ? he : en);
   const issues = useMemo(() => {
     const list: Array<{
       severity: 'error' | 'warning' | 'info';
@@ -1115,10 +1158,13 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     if (overCap.length > 0) {
       list.push({
         severity: 'error',
-        title: `${overCap.length} מורים מעל המכסה (>100% ניצול)`,
+        title: L(
+          `${overCap.length} מורים מעל המכסה (>100% ניצול)`,
+          `${overCap.length} teachers over their cap (>100% utilization)`,
+        ),
         detail: overCap.slice(0, 5).map((t) =>
           `${t.name} — ${t.utilization_pct}%`).join(' · ')
-          + (overCap.length > 5 ? ` · +${overCap.length - 5} נוספים` : ''),
+          + (overCap.length > 5 ? L(` · +${overCap.length - 5} נוספים`, ` · +${overCap.length - 5} more`) : ''),
       });
     }
 
@@ -1126,9 +1172,12 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     if (longGaps.length > 0) {
       list.push({
         severity: 'error',
-        title: `${longGaps.length} מורים עם חלון של ${quality.long_window_threshold}+ שעות`,
+        title: L(
+          `${longGaps.length} מורים עם חלון של ${quality.long_window_threshold}+ שעות`,
+          `${longGaps.length} teachers with a window of ${quality.long_window_threshold}+ hours`,
+        ),
         detail: longGaps.slice(0, 5).map((t) =>
-          `${t.name} — פער ${t.max_single_gap}`).join(' · '),
+          L(`${t.name} — פער ${t.max_single_gap}`, `${t.name} — gap ${t.max_single_gap}`)).join(' · '),
       });
     }
 
@@ -1136,7 +1185,10 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     if (tooFewLessons.length > 0) {
       list.push({
         severity: 'warning',
-        title: `${tooFewLessons.length} כיתות עם פחות מ-25 שיעורים שבועיים`,
+        title: L(
+          `${tooFewLessons.length} כיתות עם פחות מ-25 שיעורים שבועיים`,
+          `${tooFewLessons.length} classes with fewer than 25 weekly lessons`,
+        ),
         detail: tooFewLessons.slice(0, 8).map((c) =>
           `${c.name} (${c.lessons})`).join(' · '),
       });
@@ -1146,7 +1198,10 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     if (tooManyLessons.length > 0) {
       list.push({
         severity: 'warning',
-        title: `${tooManyLessons.length} כיתות עם מעל 45 שיעורים שבועיים`,
+        title: L(
+          `${tooManyLessons.length} כיתות עם מעל 45 שיעורים שבועיים`,
+          `${tooManyLessons.length} classes with more than 45 weekly lessons`,
+        ),
         detail: tooManyLessons.slice(0, 8).map((c) =>
           `${c.name} (${c.lessons})`).join(' · '),
       });
@@ -1158,8 +1213,14 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     if (teacherSingleClass.length > 0) {
       list.push({
         severity: 'info',
-        title: `${teacherSingleClass.length} מורים עם 10+ שעות בכיתה אחת בלבד`,
-        detail: 'יש לבדוק אם הנתון נכון (יתכנו בעיות בייבוא)',
+        title: L(
+          `${teacherSingleClass.length} מורים עם 10+ שעות בכיתה אחת בלבד`,
+          `${teacherSingleClass.length} teachers with 10+ hours in a single class`,
+        ),
+        detail: L(
+          'יש לבדוק אם הנתון נכון (יתכנו בעיות בייבוא)',
+          'Worth checking whether this is correct (possible import issues)',
+        ),
       });
     }
 
@@ -1169,7 +1230,7 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
   if (issues.length === 0) {
     return (
       <Alert severity="success" sx={{ mb: 0 }}>
-        ✓ לא נמצאו בעיות בנתונים — המערכת נראית מאוזנת
+        {L('✓ לא נמצאו בעיות בנתונים — המערכת נראית מאוזנת', '✓ No data issues found — the schedule looks balanced')}
       </Alert>
     );
   }
@@ -1178,7 +1239,7 @@ function DataQualityIssues({ quality }: { quality: TimetableQuality }) {
     <Card>
       <CardContent>
         <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1.5 }}>
-          בעיות שזוהו ({issues.length})
+          {L(`בעיות שזוהו (${issues.length})`, `Issues found (${issues.length})`)}
         </Typography>
         <Stack spacing={1}>
           {issues.map((iss, i) => (
@@ -1222,7 +1283,11 @@ function TeacherRow({ t, onClick }: {
   t: import('../../api/client').TeacherQualityRow;
   onClick?: () => void;
 }) {
-  const dayNames: Record<number, string> = { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' };
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
+  const dayNames: Record<number, string> = isRtl
+    ? { 1: 'א', 2: 'ב', 3: 'ג', 4: 'ד', 5: 'ה' }
+    : { 1: 'Sun', 2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu' };
   // Color the windows cell by severity.
   const winColor = t.windows === 0 ? 'success.dark'
     : t.windows >= 5 ? 'error.dark'

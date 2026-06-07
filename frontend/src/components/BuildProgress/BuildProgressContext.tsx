@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getTimetable, getTimetables } from '../../api/client';
 
 /**
@@ -46,6 +47,8 @@ const SAFETY_NET_MS = 15 * 60 * 1000;   // 15 minutes
 const POLL_INTERVAL_MS = 2000;
 
 export function BuildProgressProvider({ children }: { children: ReactNode }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === 'he';
   const [build, setBuild] = useState<BuildProgress | null>(null);
   const [outcome, setOutcome] = useState<BuildOutcome | null>(null);
   const pollerRef = useRef<number | null>(null);
@@ -94,7 +97,9 @@ export function BuildProgressProvider({ children }: { children: ReactNode }) {
             setBuild(null);
             setOutcome({
               status: 'failed', timetableId: ttId, timetableName: ttName,
-              log: 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.',
+              log: isRtl
+                ? 'הבנייה לוקחת יותר מ-15 דקות — בדקו את לוג השרת.'
+                : 'The build is taking more than 15 minutes — check the server log.',
             });
           }
           return;
@@ -118,7 +123,7 @@ export function BuildProgressProvider({ children }: { children: ReactNode }) {
     // Fire immediately so the banner shows progress fast, then on interval.
     tick();
     pollerRef.current = window.setInterval(tick, POLL_INTERVAL_MS);
-  }, [stopPolling]);
+  }, [stopPolling, isRtl]);
 
   const trackBuild = useCallback((ttId: number, opts?: { timetableName?: string }) => {
     startPolling(ttId, opts?.timetableName);
